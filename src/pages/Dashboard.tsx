@@ -34,12 +34,12 @@ function Dashboard() {
     '30d': {
       interviews: 642,
       anomalies: 180,
-      confirmed:  164,
+      confirmed: 164,
       chartData: Array.from({ length: 30 }, (_, i) => ({
         date: `Day ${i + 1}`,
         interviews: Math.floor(Math.random() * 30) + 15,
-        anomalies: Math.floor(Math.random() * 7) + 3,    // 3–9 anomalies/day
-        confirmed: Math.floor(Math.random() * 5) + 2     // 2–6 confirmed/day
+        anomalies: Math.floor(Math.random() * 7) + 3,
+        confirmed: Math.floor(Math.random() * 5) + 2
       }))
     },
     '90d': {
@@ -49,8 +49,8 @@ function Dashboard() {
       chartData: Array.from({ length: 90 }, (_, i) => ({
         date: `Day ${i + 1}`,
         interviews: Math.floor(Math.random() * 30) + 15,
-        anomalies: Math.floor(Math.random() * 9) + 4,    // 4–12 anomalies/day
-        confirmed: Math.floor(Math.random() * 6) + 3     // 3–8 confirmed/day
+        anomalies: Math.floor(Math.random() * 9) + 4,
+        confirmed: Math.floor(Math.random() * 6) + 3
       }))
     }
   }
@@ -58,88 +58,81 @@ function Dashboard() {
   const currentStats = stats[timeframe]
 
   return (
-    <div className="flex-1 overflow-auto">
-      <header className="bg-white border-b border-gray-200 px-8 py-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-gray-900">
+    <div className="flex-1 overflow-auto bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-4 sm:px-8 py-4 sm:py-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">
             Dashboard Overview
           </h1>
-          <div className="relative">
+          <div className="w-full sm:w-auto relative">
             <select
               value={timeframe}
-              onChange={(e) =>
+              onChange={e =>
                 setTimeframe(e.target.value as '7d' | '30d' | '90d')
               }
-              className="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full sm:w-auto appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="7d">Last 7 days</option>
               <option value="30d">Last 30 days</option>
               <option value="90d">Last 90 days</option>
             </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
           </div>
         </div>
       </header>
 
-      <main className="p-8">
+      {/* Main content */}
+      <main className="p-4 sm:p-8">
         {/* Top-level stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center gap-4">
-              <div className="bg-blue-100 rounded-full p-3">
-                <Users className="h-6 w-6 text-blue-600" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+          {[
+            {
+              icon: <Users className="h-6 w-6 text-blue-600" />,
+              label: 'Total Interviews',
+              value: currentStats.interviews,
+              bg: 'bg-blue-100'
+            },
+            {
+              icon: <AlertTriangle className="h-6 w-6 text-yellow-600" />,
+              label: 'Anomalies Detected',
+              value: currentStats.anomalies,
+              bg: 'bg-yellow-100'
+            },
+            {
+              icon: <Ban className="h-6 w-6 text-red-600" />,
+              label: 'Confirmed Cheating',
+              value: currentStats.confirmed,
+              bg: 'bg-red-100'
+            }
+          ].map((stat, idx) => (
+            <div
+              key={idx}
+              className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 flex items-center gap-4"
+            >
+              <div className={`${stat.bg} rounded-full p-3`}>
+                {stat.icon}
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-600">
-                  Total Interviews
+                  {stat.label}
                 </p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {currentStats.interviews}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center gap-4">
-              <div className="bg-yellow-100 rounded-full p-3">
-                <AlertTriangle className="h-6 w-6 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">
-                  Anomalies Detected
-                </p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {currentStats.anomalies}
+                <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                  {stat.value}
                 </p>
               </div>
             </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center gap-4">
-              <div className="bg-red-100 rounded-full p-3">
-                <Ban className="h-6 w-6 text-red-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">
-                  Confirmed Cheating
-                </p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {currentStats.confirmed}
-                </p>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* Charts */}
-        <div className="grid grid-cols-1 gap-6 mt-8">
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="mt-6 grid grid-cols-1 gap-6">
+          {/* Interview Activity */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
               Interview Activity
             </h2>
-            <div className="h-[400px]">
+            <div className="h-56 sm:h-[400px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={currentStats.chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -158,11 +151,12 @@ function Dashboard() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          {/* Anomalies & Confirmed */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
               Anomalies & Confirmed Cases
             </h2>
-            <div className="h-[400px]">
+            <div className="h-56 sm:h-[400px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={currentStats.chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
