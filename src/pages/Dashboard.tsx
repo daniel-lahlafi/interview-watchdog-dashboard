@@ -85,45 +85,53 @@ function Dashboard() {
       {/* Main content */}
       <main className="p-4 sm:p-8">
         {/* Top-level stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-          {[
-            {
-              icon: <Users className="h-6 w-6 text-blue-600" />,
-              label: 'Total Interviews',
-              value: currentStats.interviews,
-              bg: 'bg-blue-100'
-            },
-            {
-              icon: <AlertTriangle className="h-6 w-6 text-yellow-600" />,
-              label: 'Anomalies Detected',
-              value: currentStats.anomalies,
-              bg: 'bg-yellow-100'
-            },
-            {
-              icon: <Ban className="h-6 w-6 text-red-600" />,
-              label: 'Confirmed Cheating',
-              value: currentStats.confirmed,
-              bg: 'bg-red-100'
-            }
-          ].map((stat, idx) => (
-            <div
-              key={idx}
-              className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 flex items-center gap-4"
-            >
-              <div className={`${stat.bg} rounded-full p-3`}>
-                {stat.icon}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-600">
-                  {stat.label}
-                </p>
-                <p className="text-xl sm:text-2xl font-semibold text-gray-900">
-                  {stat.value}
-                </p>
-              </div>
+        <div className="flex flex-wrap gap-4 sm:gap-6">
+        {[
+          {
+            icon: <Users className="h-6 w-6 text-blue-600" />,
+            label: 'Total Interviews',
+            value: currentStats.interviews,
+            bg: 'bg-blue-100'
+          },
+          {
+            icon: <AlertTriangle className="h-6 w-6 text-yellow-600" />,
+            label: 'Anomalies Detected',
+            value: currentStats.anomalies,
+            bg: 'bg-yellow-100'
+          },
+          {
+            icon: <Ban className="h-6 w-6 text-red-600" />,
+            label: 'Confirmed Cheating',
+            value: currentStats.confirmed,
+            bg: 'bg-red-100'
+          }
+        ].map((stat, idx) => (
+          <div
+            key={idx}
+            className="
+              w-full sm:flex-1
+              bg-white rounded-xl border border-gray-200
+              p-4 sm:p-6
+              flex flex-col sm:flex-row items-center gap-4
+              min-w-50
+            "
+          >
+            <div className={`${stat.bg} rounded-full p-3 flex-shrink-0`}>
+              {stat.icon}
             </div>
-          ))}
-        </div>
+            <div className="text-center sm:text-left min-w-0">
+              <p className="text-sm font-medium text-gray-600">
+                {stat.label}
+              </p>
+              <p className="text-xl sm:text-2xl font-semibold text-gray-900">
+                {stat.value}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+
 
         {/* Charts */}
         <div className="mt-6 grid grid-cols-1 gap-6">
