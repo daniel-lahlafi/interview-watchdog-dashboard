@@ -1,37 +1,10 @@
 import React, { useState } from 'react'
 import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { defaultInterviews } from '../mock/Interviews';
 
-// Mock data for interviews
-const mockInterviews = [
-  {
-    id: 1,
-    candidate: "John Smith",
-    position: "Senior React Developer",
-    date: "2024-03-15",
-    duration: "45 minutes",
-    hasAnomalies: true,
-    confirmedCheating: false,
-  },
-  {
-    id: 2,
-    candidate: "Sarah Johnson",
-    position: "Full Stack Engineer",
-    date: "2024-03-14",
-    duration: "60 minutes",
-    hasAnomalies: true,
-    confirmedCheating: true,
-  },
-  {
-    id: 3,
-    candidate: "Michael Brown",
-    position: "Frontend Developer",
-    date: "2024-03-14",
-    duration: "50 minutes",
-    hasAnomalies: false,
-    confirmedCheating: false,
-  }
-]
+const stored = localStorage.getItem('interviews');
+const mockInterviews = stored ? JSON.parse(stored) : defaultInterviews;
 
 function Interviews() {
   const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d'>('7d')

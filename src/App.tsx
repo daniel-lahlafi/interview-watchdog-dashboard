@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Interviews from './pages/Interviews'
 import InterviewDetails from './pages/InterviewDetails'
 import Settings from './pages/Settings'
+import CreateInterview from './pages/CreateInterview'
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
               path="/settings"
               element={<Settings/>}
             />
+            <Route path="/create-interview" element={<CreateInterview />} />
           </Routes>
         </div>
       </div>

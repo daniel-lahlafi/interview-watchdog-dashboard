@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { Home, FileText, Settings, LogOut } from 'lucide-react'
 
 const navItems = [
+  { to: '/create-interview', icon: <FileText className="h-5 w-5" />, label: 'Create Interview' },
   { to: '/', icon: <Home className="h-5 w-5" />, label: 'Dashboard' },
   { to: '/interviews', icon: <FileText className="h-5 w-5" />, label: 'Interviews' },
   { to: '/settings', icon: <Settings className="h-5 w-5" />, label: 'Settings' },
