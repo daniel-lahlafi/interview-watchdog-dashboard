@@ -1,194 +1,195 @@
-import React, { useState } from 'react'
-import { Users, AlertTriangle, Ban, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext'
+import { interviewService } from '../firebase/services'
+import { InterviewStatus } from '../firebase/types'
 import {
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  Legend
 } from 'recharts'
+import { AlertTriangle, CheckCircle, Ban, Clock } from 'lucide-react'
 
 function Dashboard() {
-  const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d'>('7d')
+  const { user } = useAuth()
+  const [stats, setStats] = useState({
+    totalInterviews: 0,
+    cleanInterviews: 0,
+    suspiciousInterviews: 0,
+    cheatingInterviews: 0,
+    notCompletedInterviews: 0,
+    weeklyData: [] as { date: string; suspicious: number; cheating: number }[],
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Mock data for stats — increased anomalies & confirmed
-  const stats = {
-    '7d': {
-      interviews: 123,
-      anomalies: 45,
-      confirmed: 32,
-      chartData: [
-        { date: 'Mon', interviews: 20, anomalies: 6, confirmed: 3 },
-        { date: 'Tue', interviews: 25, anomalies: 7, confirmed: 4 },
-        { date: 'Wed', interviews: 22, anomalies: 6, confirmed: 2 },
-        { date: 'Thu', interviews: 28, anomalies: 8, confirmed: 3 },
-        { date: 'Fri', interviews: 24, anomalies: 7, confirmed: 2 },
-        { date: 'Sat', interviews: 18, anomalies: 5, confirmed: 1 },
-        { date: 'Sun', interviews: 19, anomalies: 6, confirmed: 1 }
-      ]
-    },
-    '30d': {
-      interviews: 642,
-      anomalies: 180,
-      confirmed: 164,
-      chartData: Array.from({ length: 30 }, (_, i) => ({
-        date: `Day ${i + 1}`,
-        interviews: Math.floor(Math.random() * 30) + 15,
-        anomalies: Math.floor(Math.random() * 7) + 3,
-        confirmed: Math.floor(Math.random() * 5) + 2
-      }))
-    },
-    '90d': {
-      interviews: 1893,
-      anomalies: 550,
-      confirmed: 467,
-      chartData: Array.from({ length: 90 }, (_, i) => ({
-        date: `Day ${i + 1}`,
-        interviews: Math.floor(Math.random() * 30) + 15,
-        anomalies: Math.floor(Math.random() * 9) + 4,
-        confirmed: Math.floor(Math.random() * 6) + 3
-      }))
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true)
+        if (!user?.uid) {
+          throw new Error('User not authenticated')
+        }
+        
+        // Fetch interviews for the current user as interviewer
+        const userInterviews = await interviewService.getInterviewsByInterviewer(user.uid)
+
+        // Calculate statistics
+        const cleanCount = userInterviews.filter(
+          interview => interview.status === InterviewStatus.Completed
+        ).length
+
+        const suspiciousCount = userInterviews.filter(
+          interview => interview.status === InterviewStatus.SuspiciousActivity
+        ).length
+
+        const cheatingCount = userInterviews.filter(
+          interview => interview.status === InterviewStatus.Cheating
+        ).length
+
+        const notCompletedCount = userInterviews.filter(
+          interview => interview.status === InterviewStatus.NotCompleted
+        ).length
+
+        // Generate weekly data
+        const weeklyData = generateWeeklyData(userInterviews)
+
+        setStats({
+          totalInterviews: userInterviews.length,
+          cleanInterviews: cleanCount,
+          suspiciousInterviews: suspiciousCount,
+          cheatingInterviews: cheatingCount,
+          notCompletedInterviews: notCompletedCount,
+          weeklyData,
+        })
+      } catch (err) {
+        setError('Failed to fetch dashboard data')
+        console.error(err)
+      } finally {
+        setLoading(false)
+      }
     }
+
+    if (user) {
+      fetchDashboardData()
+    }
+  }, [user])
+
+  const generateWeeklyData = (interviews: any[]) => {
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      return date.toISOString().split('T')[0]
+    }).reverse()
+
+    return last7Days.map(date => ({
+      date: new Date(date).toLocaleDateString('en-US', { weekday: 'short' }),
+      suspicious: interviews.filter(interview => 
+        interview.date.split('T')[0] === date && 
+        interview.status === InterviewStatus.SuspiciousActivity
+      ).length,
+      cheating: interviews.filter(interview => 
+        interview.date.split('T')[0] === date && 
+        interview.status === InterviewStatus.Cheating
+      ).length,
+    }))
   }
 
-  const currentStats = stats[timeframe]
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-gray-500">Loading dashboard...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-red-500">{error}</p>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 sm:px-8 py-4 sm:py-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">
-            Dashboard Overview
-          </h1>
-          <div className="w-full sm:w-auto relative">
-            <select
-              value={timeframe}
-              onChange={e =>
-                setTimeframe(e.target.value as '7d' | '30d' | '90d')
-              }
-              className="w-full sm:w-auto appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
-          </div>
-        </div>
+    <div className="flex-1 overflow-auto p-8">
+      <header className="mb-8">
+        <h1 className="text-2xl font-semibold text-gray-900">
+          Welcome back, {user?.email}
+        </h1>
+        <p className="text-gray-500">Here's your interview monitoring dashboard</p>
       </header>
 
-      {/* Main content */}
-      <main className="p-4 sm:p-8">
-        {/* Top-level stats */}
-        <div className="flex flex-wrap gap-4 sm:gap-6">
-        {[
-          {
-            icon: <Users className="h-6 w-6 text-blue-600" />,
-            label: 'Total Interviews',
-            value: currentStats.interviews,
-            bg: 'bg-blue-100'
-          },
-          {
-            icon: <AlertTriangle className="h-6 w-6 text-yellow-600" />,
-            label: 'Anomalies Detected',
-            value: currentStats.anomalies,
-            bg: 'bg-yellow-100'
-          },
-          {
-            icon: <Ban className="h-6 w-6 text-red-600" />,
-            label: 'Confirmed Cheating',
-            value: currentStats.confirmed,
-            bg: 'bg-red-100'
-          }
-        ].map((stat, idx) => (
-          <div
-            key={idx}
-            className="
-              w-full sm:flex-1
-              bg-white rounded-xl border border-gray-200
-              p-4 sm:p-6
-              flex flex-col sm:flex-row items-center gap-4
-              min-w-50
-            "
-          >
-            <div className={`${stat.bg} rounded-full p-3 flex-shrink-0`}>
-              {stat.icon}
-            </div>
-            <div className="text-center sm:text-left min-w-0">
-              <p className="text-sm font-medium text-gray-600">
-                {stat.label}
-              </p>
-              <p className="text-xl sm:text-2xl font-semibold text-gray-900">
-                {stat.value}
-              </p>
-            </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            Pending Interviews
+          </h3>
+          <p className="text-3xl font-bold text-gray-900">
+            {stats.notCompletedInterviews}
+          </p>
+        </div>
+
+
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-medium text-gray-900">
+              Clean Interviews
+            </h3>
+            <CheckCircle className="h-5 w-5 text-green-500" />
           </div>
-        ))}
+          <p className="text-3xl font-bold text-green-600">
+            {stats.cleanInterviews}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-medium text-gray-900">
+              Suspicious Interviews
+            </h3>
+            <AlertTriangle className="h-5 w-5 text-yellow-500" />
+          </div>
+          <p className="text-3xl font-bold text-yellow-600">
+            {stats.suspiciousInterviews}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-medium text-gray-900">
+              Cheating Interviews
+            </h3>
+            <Ban className="h-5 w-5 text-red-500" />
+          </div>
+          <p className="text-3xl font-bold text-red-600">
+            {stats.cheatingInterviews}
+          </p>
+        </div>
       </div>
 
-
-
-        {/* Charts */}
-        <div className="mt-6 grid grid-cols-1 gap-6">
-          {/* Interview Activity */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
-              Interview Activity
-            </h2>
-            <div className="h-56 sm:h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={currentStats.chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Area
-                    type="monotone"
-                    dataKey="interviews"
-                    fillOpacity={0.1}
-                    stroke="#2563eb"
-                    fill="#3b82f6"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Anomalies & Confirmed */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
-              Anomalies & Confirmed Cases
-            </h2>
-            <div className="h-56 sm:h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={currentStats.chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Line
-                    type="monotone"
-                    dataKey="anomalies"
-                    stroke="#eab308"
-                    strokeWidth={2}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="confirmed"
-                    stroke="#dc2626"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">
+          Suspicious & Cheating Activity This Week
+        </h3>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={stats.weeklyData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="suspicious" name="Suspicious" fill="#EAB308" />
+              <Bar dataKey="cheating" name="Cheating" fill="#EF4444" />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-      </main>
+      </div>
     </div>
   )
 }

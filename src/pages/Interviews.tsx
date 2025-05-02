@@ -1,40 +1,153 @@
-import React, { useState } from 'react'
-import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle, ChevronUp, ChevronDown as ChevronDownIcon, Clock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { defaultInterviews } from '../mock/Interviews';
+import { interviewService } from '../firebase/services'
+import type { Interview } from '../firebase/types'
+import { InterviewStatus } from '../firebase/types'
+import { useAuth } from '../contexts/AuthContext'
 
-const stored = localStorage.getItem('interviews');
-const mockInterviews = stored ? JSON.parse(stored) : defaultInterviews;
+type SortField = 'date' | 'candidate' | 'position' | 'status'
+type SortOrder = 'asc' | 'desc'
 
 function Interviews() {
   const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d'>('7d')
+  const [interviews, setInterviews] = useState<Interview[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage] = useState(10)
+  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [searchTerm, setSearchTerm] = useState('')
   const navigate = useNavigate()
+  const { user } = useAuth()
+  
+  useEffect(() => {
+    const fetchInterviews = async () => {
+      try {
+        setLoading(true)
+        const data = await interviewService.getInterviewsByInterviewer(user?.uid ?? '')
+        setInterviews(data)
+      } catch (err) {
+        setError('Failed to fetch interviews')
+        console.error(err)
+      } finally {
+        setLoading(false)
+      }
+    }
 
-  const goToDetail = (id: number) => {
+    fetchInterviews()
+  }, [])
+
+  const goToDetail = (id: string) => {
     navigate(`/interviews/${id}`)
   }
 
-  // helper to derive label, color and icon
-  const getStatusProps = (interview: typeof mockInterviews[0]) => {
-    if (interview.confirmedCheating) {
-      return {
-        label: 'Confirmed cheating',
-        bg: 'bg-red-100 text-red-800',
-        Icon: Ban
-      }
-    } else if (interview.hasAnomalies) {
-      return {
-        label: 'Potential cheating',
-        bg: 'bg-yellow-100 text-yellow-800',
-        Icon: AlertTriangle
-      }
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
-      return {
-        label: 'No cheating detected',
-        bg: 'bg-green-100 text-green-800',
-        Icon: CheckCircle
-      }
+      setSortField(field)
+      setSortOrder('asc')
     }
+  }
+
+  // helper to derive label, color and icon
+  const getStatusProps = (interview: Interview) => {
+    switch (interview.status) {
+      case InterviewStatus.NotCompleted:
+        return {
+          label: 'Not Completed',
+          bg: 'bg-gray-100 text-gray-800',
+          Icon: Clock
+        }
+      case InterviewStatus.SuspiciousActivity:
+        return {
+          label: 'Suspicious Activity',
+          bg: 'bg-yellow-100 text-yellow-800',
+          Icon: AlertTriangle
+        }
+      case InterviewStatus.Cheating:
+        return {
+          label: 'Cheating',
+          bg: 'bg-red-100 text-red-800',
+          Icon: Ban
+        }
+      case InterviewStatus.Completed:
+        return {
+          label: 'Completed',
+          bg: 'bg-green-100 text-green-800',
+          Icon: CheckCircle
+        }
+      default:
+        return {
+          label: 'Not Completed',
+          bg: 'bg-gray-100 text-gray-800',
+          Icon: Clock
+        }
+    }
+  }
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  // Filter and sort interviews
+  const filteredAndSortedInterviews = interviews
+    .filter(interview => {
+      const searchLower = searchTerm.toLowerCase()
+      return (
+        interview.candidate.toLowerCase().includes(searchLower) ||
+        interview.position.toLowerCase().includes(searchLower)
+      )
+    })
+    .sort((a, b) => {
+      let comparison = 0
+      switch (sortField) {
+        case 'date':
+          comparison = new Date(a.date).getTime() - new Date(b.date).getTime()
+          break
+        case 'candidate':
+          comparison = a.candidate.localeCompare(b.candidate)
+          break
+        case 'position':
+          comparison = a.position.localeCompare(b.position)
+          break
+        case 'status':
+          const statusA = getStatusProps(a).label
+          const statusB = getStatusProps(b).label
+          comparison = statusA.localeCompare(statusB)
+          break
+      }
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+
+  // Pagination
+  const indexOfLastItem = currentPage * itemsPerPage
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage
+  const currentInterviews = filteredAndSortedInterviews.slice(indexOfFirstItem, indexOfLastItem)
+  const totalPages = Math.ceil(filteredAndSortedInterviews.length / itemsPerPage)
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-gray-500">Loading interviews...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-red-500">{error}</p>
+      </div>
+    )
   }
 
   return (
@@ -42,17 +155,26 @@ function Interviews() {
       <header className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Interviews</h1>
-          <div className="relative">
-            <select
-              value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value as any)}
-              className="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+          <div className="flex items-center gap-4">
+            <input
+              type="text"
+              placeholder="Search interviews..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <div className="relative">
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value as any)}
+                className="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            </div>
           </div>
         </div>
       </header>
@@ -63,17 +185,49 @@ function Interviews() {
             <table className="min-w-full divide-y divide-gray-200 table-auto">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() => handleSort('status')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Status
+                      {sortField === 'status' && (
+                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Candidate
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() => handleSort('candidate')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Candidate
+                      {sortField === 'candidate' && (
+                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Position
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() => handleSort('position')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Position
+                      {sortField === 'position' && (
+                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                    onClick={() => handleSort('date')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Date
+                      {sortField === 'date' && (
+                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Duration
@@ -84,7 +238,7 @@ function Interviews() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {mockInterviews.map((interview) => {
+                {currentInterviews.map((interview) => {
                   const { label, bg, Icon } = getStatusProps(interview)
                   return (
                     <tr
@@ -110,7 +264,7 @@ function Interviews() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">
-                          {interview.date}
+                          {formatDate(interview.date)}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -135,6 +289,68 @@ function Interviews() {
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination */}
+          <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
+            <div className="flex-1 flex justify-between sm:hidden">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Next
+              </button>
+            </div>
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{indexOfFirstItem + 1}</span> to{' '}
+                  <span className="font-medium">
+                    {Math.min(indexOfLastItem, filteredAndSortedInterviews.length)}
+                  </span>{' '}
+                  of <span className="font-medium">{filteredAndSortedInterviews.length}</span> results
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                  >
+                    Previous
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                        currentPage === page
+                          ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                  >
+                    Next
+                  </button>
+                </nav>
+              </div>
+            </div>
           </div>
         </div>
       </main>
