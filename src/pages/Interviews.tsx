@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle, ChevronUp, ChevronDown as ChevronDownIcon, Clock } from 'lucide-react'
+import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle, ChevronUp, ChevronDown as ChevronDownIcon, Clock, Radio } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import interviewService from '../firebase/services'
 import type { Interview } from '../firebase/types'
-import { InterviewStatus } from '../firebase/types'
+import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 
 type SortField = 'date' | 'candidate' | 'position' | 'status'
@@ -68,7 +68,10 @@ function Interviews() {
 
   // helper to derive label, color and icon
   const getStatusProps = (interview: Interview) => {
-    switch (interview.status) {
+    // Use the effective status which considers scheduled time
+    const effectiveStatus = getEffectiveInterviewStatus(interview);
+    
+    switch (effectiveStatus) {
       case InterviewStatus.NotCompleted:
         return {
           label: 'Not Completed',
@@ -92,6 +95,12 @@ function Interviews() {
           label: 'Completed',
           bg: 'bg-green-100 text-green-800',
           Icon: CheckCircle
+        }
+      case InterviewStatus.Live:
+        return {
+          label: 'Live Now',
+          bg: 'bg-blue-100 text-blue-800',
+          Icon: Radio
         }
       default:
         return {

@@ -2,11 +2,11 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info } from 'lucide-react'
+import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio } from 'lucide-react'
 import interviewService from '../firebase/services'
 import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
-import { InterviewStatus } from '../firebase/types'
+import { InterviewStatus, getEffectiveInterviewStatus, isInterviewLive } from '../firebase/types'
 import SequentialVideoPlayer, { SequentialVideoPlayerHandle } from '../components/SequentialVideoPlayer'
 
 // Helper function to get timezone abbreviation
@@ -518,6 +518,9 @@ function InterviewDetails() {
   // Extract values from interview
   const { candidate, position, date, duration } = getInterviewDetails();
 
+  // Add a live badge at the top of the page if it's currently live
+  const effectiveStatus = interview ? getEffectiveInterviewStatus(interview) : InterviewStatus.NotCompleted;
+
   // guard: loading state
   if (loading) {
     return (
@@ -588,12 +591,14 @@ function InterviewDetails() {
               {candidate}
             </h1>
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-              interview.status === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
-              interview.status === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
-              interview.status === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
+              effectiveStatus === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
+              effectiveStatus === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
+              effectiveStatus === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
+              effectiveStatus === InterviewStatus.Live ? 'bg-blue-100 text-blue-600' :
               'bg-red-100 text-red-600'
             }`}>
-              {interview.status}
+              {effectiveStatus === InterviewStatus.Live && <Radio className="inline-block mr-1 h-3 w-3 animate-pulse" />}
+              {effectiveStatus}
             </span>
           </div>
           <p className="text-sm text-gray-500">
@@ -610,6 +615,20 @@ function InterviewDetails() {
             Refresh
           </button>
         </header>
+
+        {effectiveStatus === InterviewStatus.Live && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex items-start gap-2">
+            <Radio className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0 animate-pulse" />
+            <div>
+              <p className="text-blue-700 text-sm font-medium">
+                This interview is currently live
+              </p>
+              <p className="text-blue-600 text-xs">
+                Started at {interview.startTime} ({interview.timezone}) and runs for {interview.duration} minutes
+              </p>
+            </div>
+          </div>
+        )}
 
         {interview.status === InterviewStatus.NotCompleted ? (
           <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
@@ -649,19 +668,6 @@ function InterviewDetails() {
               </div>
             )}
 
-            {/* Live Status Indicator */}
-            {interview?.status === InterviewStatus.Live && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex items-start gap-2">
-                <Info className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-blue-700 text-sm font-medium">
-                    <span className="inline-block h-2 w-2 rounded-full bg-red-500 mr-2 animate-pulse"></span>
-                    Live Interview - Suspicious activity will be detected in real-time
-                  </p>
-                </div>
-              </div>
-            )}
-            
             {/* Timeline controls */}
             <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
               <div className="flex justify-between items-center mb-2">
