@@ -130,7 +130,7 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       // Fallback: use basic positioning based on chunk index
       if (videoRef.current && sortedUrlsRef.current.length > 0) {
         // Estimate chunk duration at 4 seconds
-        const estimatedChunkDuration = 4;
+        const estimatedChunkDuration = 1;
         const totalDuration = sortedUrlsRef.current.length * estimatedChunkDuration;
         
         // Calculate which chunk should contain this time
@@ -423,58 +423,113 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
     }
   }, [onDurationChange]);
   
-  // Function to preload the next chunk
+  // Modify preloading to handle very short (1-second) chunks by loading multiple chunks ahead
   const preloadNextChunk = useCallback(() => {
     if (!preloadVideoRef.current || sortedUrlsRef.current.length === 0) return;
     
-    const nextIndex = currentChunkIndex + 1;
+    // For short 1-second chunks, we need to preload multiple chunks ahead
+    const CHUNKS_TO_PRELOAD = 3; // Preload 3 chunks ahead for 1-second chunks
     
-    // Only preload if there is a next chunk and it's not already preloading
-    if (nextIndex < sortedUrlsRef.current.length && nextIndex !== preloadingIndexRef.current) {
-      const nextUrl = sortedUrlsRef.current[nextIndex];
-      console.log(`Preloading next chunk (${nextIndex + 1}/${sortedUrlsRef.current.length}): ${nextUrl}`);
+    // Determine which chunks to preload
+    for (let i = 1; i <= CHUNKS_TO_PRELOAD; i++) {
+      const nextIndex = currentChunkIndex + i;
       
-      preloadVideoRef.current.src = nextUrl;
-      preloadingIndexRef.current = nextIndex;
-      
-      // Start loading the video data
-      preloadVideoRef.current.load();
+      // Only preload if this chunk exists and it's not already being preloaded
+      if (nextIndex < sortedUrlsRef.current.length && nextIndex !== preloadingIndexRef.current) {
+        const nextUrl = sortedUrlsRef.current[nextIndex];
+        console.log(`Preloading next chunk (${nextIndex + 1}/${sortedUrlsRef.current.length}): ${nextUrl}`);
+        
+        // For the immediate next chunk, use preloadVideoRef
+        if (i === 1) {
+          preloadVideoRef.current.src = nextUrl;
+          preloadingIndexRef.current = nextIndex;
+          preloadVideoRef.current.load();
+        } else {
+          // For additional chunks, create temporary Image objects to prime browser cache
+          // This is a lightweight way to get the browser to start loading resources
+          const tempLoader = new Image();
+          tempLoader.src = nextUrl;
+        }
+        
+        // Only create one preload video element, but try to prime cache for others
+        break;
+      }
     }
   }, [currentChunkIndex]);
   
-  // Start preloading when the current video is playing
+  // More aggressively preload for short chunks
   useEffect(() => {
-    if (isPlaying && videoRef.current && sortedUrlsRef.current.length > 0) {
-      // Preload the next chunk once the current one has loaded metadata
-      const handleLoadedMetadata = () => {
-        preloadNextChunk();
-      };
+    if (videoRef.current && sortedUrlsRef.current.length > 0) {
+      // For 1-second chunks, we should preload regardless of playing state
       
-      // Also preload when we're 80% through the current video
-      const handleTimeUpdate = () => {
-        if (videoRef.current) {
-          const percentPlayed = videoRef.current.currentTime / (videoRef.current.duration || 1);
-          if (percentPlayed > 0.8) {
-            preloadNextChunk();
+      // Always preload on chunk change
+      preloadNextChunk();
+      
+      // Preload more aggressively while playing
+      if (isPlaying) {
+        // For very short chunks, preload on metadata load
+        const handleLoadedMetadata = () => {
+          preloadNextChunk();
+        };
+        
+        // For short 1-second chunks, we need to preload almost immediately
+        const handleTimeUpdate = () => {
+          if (videoRef.current) {
+            const percentPlayed = videoRef.current.currentTime / (videoRef.current.duration || 1);
+            // For 1-second chunks, start preloading at 25%
+            if (percentPlayed > 0.25) {
+              preloadNextChunk();
+            }
+            
+            // When we're really close to the end, preload multiple chunks
+            if (percentPlayed > 0.75) {
+              // Force loading multiple chunks ahead
+              const nextIndex = currentChunkIndex + 1;
+              if (nextIndex < sortedUrlsRef.current.length && preloadVideoRef.current) {
+                preloadVideoRef.current.load();
+              }
+            }
           }
-        }
-      };
-      
-      videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
-      videoRef.current.addEventListener('timeupdate', handleTimeUpdate);
-      
-      return () => {
-        if (videoRef.current) {
-          videoRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
-          videoRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-        }
-      };
+        };
+        
+        videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
+        videoRef.current.addEventListener('timeupdate', handleTimeUpdate);
+        
+        // Set up interval to ensure preloading happens, even if events don't fire
+        // This is important for very short 1-second chunks
+        const preloadInterval = setInterval(preloadNextChunk, 250);
+        
+        return () => {
+          if (videoRef.current) {
+            videoRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            videoRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+          }
+          clearInterval(preloadInterval);
+        };
+      }
     }
-  }, [isPlaying, preloadNextChunk]);
+  }, [isPlaying, preloadNextChunk, currentChunkIndex]);
   
-  // Handle moving to the next chunk when current one ends
+  // Optimize the ended handler for very short chunks
   const handleVideoEnded = useCallback(() => {
     console.log('Video chunk ended, auto-progressing to next chunk');
+    
+    // Immediately preload multiple chunks ahead
+    for (let i = 1; i <= 3; i++) {
+      const futureIndex = currentChunkIndex + i;
+      if (futureIndex < sortedUrlsRef.current.length) {
+        // For the immediate next chunk, use preloadVideoRef
+        if (i === 1 && preloadVideoRef.current) {
+          preloadVideoRef.current.src = sortedUrlsRef.current[futureIndex];
+          preloadingIndexRef.current = futureIndex;
+          preloadVideoRef.current.load();
+        } else {
+          // Prime browser cache for further chunks
+          const tempLoader = new Image();
+          tempLoader.src = sortedUrlsRef.current[futureIndex];
+        }
+      }
+    }
     
     // Set flags for transition
     autoProgressingRef.current = true;
@@ -482,7 +537,6 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
     
     // Force playing state to true for auto-progression
     setIsPlaying(true);
-    console.log('Setting isPlaying state to true for auto-progression');
     
     // Use functional update pattern to avoid dependency on currentChunkIndex
     setCurrentChunkIndex(prevIndex => {
@@ -490,69 +544,26 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       if (nextIndex < sortedUrlsRef.current.length) {
         console.log(`Moving from chunk ${prevIndex} to ${nextIndex} (auto-progress)`);
         
-        // After the state update, schedule a manual play check
+        // For 1-second chunks, immediately try to play the next chunk with minimal delay
         setTimeout(() => {
           if (videoRef.current && videoRef.current.paused) {
-            console.log('Enforcing play on next chunk');
             videoRef.current.play().catch(e => {
               console.error('Error auto-playing next chunk:', e);
             });
           }
-        }, 500);
+        }, 10); // Almost immediate for 1-second chunks
         
         return nextIndex;
       } else {
         console.log('Reached end of all chunks');
-        isTransitioningRef.current = false; // Reset transition flag
-        autoProgressingRef.current = false; // Reset auto-progress flag
-        return prevIndex; // No change if we're at the end
+        isTransitioningRef.current = false;
+        autoProgressingRef.current = false;
+        return prevIndex;
       }
     });
-  }, []);
+  }, [currentChunkIndex]);
   
-  // Set up event listeners
-  useEffect(() => {
-    if (!videoRef.current) return;
-    
-    // Track play/pause state
-    const handlePlay = () => {
-      // Only update playing state if we're not in a transition
-      if (!isTransitioningRef.current) {
-        setIsPlaying(true);
-      }
-    };
-    
-    const handlePause = () => {
-      // Only update playing state if we're not in a transition
-      if (!isTransitioningRef.current) {
-        setIsPlaying(false);
-      }
-    };
-    
-    // Handle time updates
-    const handleTimeUpdate = () => {
-      if (onTimeUpdate && videoRef.current) {
-        // Send the global time to the parent component
-        onTimeUpdate(getGlobalCurrentTime());
-      }
-    };
-    
-    // Add event listeners
-    const videoElement = videoRef.current;
-    videoElement.addEventListener('ended', handleVideoEnded);
-    videoElement.addEventListener('play', handlePlay);
-    videoElement.addEventListener('pause', handlePause);
-    videoElement.addEventListener('timeupdate', handleTimeUpdate);
-    
-    return () => {
-      videoElement.removeEventListener('ended', handleVideoEnded);
-      videoElement.removeEventListener('play', handlePlay);
-      videoElement.removeEventListener('pause', handlePause);
-      videoElement.removeEventListener('timeupdate', handleTimeUpdate);
-    };
-  }, [handleVideoEnded, onTimeUpdate, getGlobalCurrentTime]);
-  
-  // Update duration info after each chunk loads
+  // Add updateChunkDuration function which was removed in previous edit
   const updateChunkDuration = useCallback(() => {
     if (!videoRef.current || durationMeasuredChunksRef.current.has(currentChunkIndex)) return;
     
@@ -560,8 +571,8 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       const duration = videoRef.current?.duration || 0;
       if (duration === 0 || isNaN(duration) || !isFinite(duration)) {
         console.warn(`Invalid duration for chunk ${currentChunkIndex} during playback, using estimate`);
-        // Use an estimated duration (either average or 4 seconds)
-        let estimatedDuration = 4; // Default fallback
+        // For 1-second chunks, prefer to use 1 second as the estimate
+        let estimatedDuration = 1; // Default to 1 second for short chunks
         
         // Try to calculate average from existing chunks
         if (chunkDurationsRef.current.length > 0) {
@@ -633,8 +644,8 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
     // Handle errors for the current video
     const handleError = () => {
       console.warn(`Error getting duration for chunk ${currentChunkIndex} during playback, using estimate`);
-      // Use an estimated duration
-      const estimatedDuration = 4; // Default to 4 seconds as mentioned
+      // Use an estimated duration - 1 second for short chunks
+      const estimatedDuration = 1;
       updateChunkDurationInfo(estimatedDuration, true);
       
       if (videoRef.current) {
@@ -656,8 +667,50 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       };
     }
   }, [currentChunkIndex, onDurationChange]);
-  
-  // Load and play the current chunk
+
+  // Add event listeners effect that was removed
+  useEffect(() => {
+    if (!videoRef.current) return;
+    
+    // Track play/pause state
+    const handlePlay = () => {
+      // Only update playing state if we're not in a transition
+      if (!isTransitioningRef.current) {
+        setIsPlaying(true);
+      }
+    };
+    
+    const handlePause = () => {
+      // Only update playing state if we're not in a transition
+      if (!isTransitioningRef.current) {
+        setIsPlaying(false);
+      }
+    };
+    
+    // Handle time updates
+    const handleTimeUpdate = () => {
+      if (onTimeUpdate && videoRef.current) {
+        // Send the global time to the parent component
+        onTimeUpdate(getGlobalCurrentTime());
+      }
+    };
+    
+    // Add event listeners
+    const videoElement = videoRef.current;
+    videoElement.addEventListener('ended', handleVideoEnded);
+    videoElement.addEventListener('play', handlePlay);
+    videoElement.addEventListener('pause', handlePause);
+    videoElement.addEventListener('timeupdate', handleTimeUpdate);
+    
+    return () => {
+      videoElement.removeEventListener('ended', handleVideoEnded);
+      videoElement.removeEventListener('play', handlePlay);
+      videoElement.removeEventListener('pause', handlePause);
+      videoElement.removeEventListener('timeupdate', handleTimeUpdate);
+    };
+  }, [handleVideoEnded, onTimeUpdate, getGlobalCurrentTime]);
+
+  // Optimize chunk loading for 1-second chunks
   useEffect(() => {
     if (!videoRef.current || sortedUrlsRef.current.length === 0 || 
         currentChunkIndex >= sortedUrlsRef.current.length) {
@@ -675,70 +728,76 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
     currentUrlRef.current = currentUrl;
     
     // Determine if we should auto-play this chunk
-    // If we're auto-progressing (from previous chunk ending) - always auto-play
-    // Otherwise check if video was playing or is set to play
     const isAutoProgressing = autoProgressingRef.current;
-    const shouldPlay = isAutoProgressing || 
-                      (videoRef.current && (!videoRef.current.paused || isPlaying));
-    
-    console.log(`Chunk load: shouldPlay=${shouldPlay}, isAutoProgressing=${isAutoProgressing}, isPlaying=${isPlaying}, isTransitioning=${isTransitioningRef.current}`);
+    const shouldPlay = isAutoProgressing || isPlaying;
     
     // Create a flag to track if the video has been played to avoid duplicate plays
     let hasTriggeredPlay = false;
     
     const loadVideo = () => {
+      if (!videoRef.current) return; // Null check for videoRef.current
+      
       // Use the preloaded data if available
       if (preloadingIndexRef.current === currentChunkIndex && preloadVideoRef.current) {
         console.log('Using preloaded video data');
-        videoRef.current!.src = currentUrl;
+        videoRef.current.src = currentUrl;
         preloadingIndexRef.current = -1;
       } else {
-        videoRef.current!.src = currentUrl;
+        videoRef.current.src = currentUrl;
+      }
+      
+      // Set load priority to high for immediate loading
+      if ('importance' in videoRef.current) {
+        // TypeScript doesn't recognize this property, so we need to use bracket notation
+        (videoRef.current as any)['importance'] = 'high';
       }
       
       // Explicitly call load() to ensure the video starts loading
-      videoRef.current!.load();
+      videoRef.current.load();
       
       // Notify parent about chunk change
       if (onChunkChange) {
         onChunkChange(currentChunkIndex, sortedUrlsRef.current.length);
       }
       
-      // Set a fallback timeout to ensure playback starts if events don't fire
+      // For 1-second chunks, use a very short fallback timeout
       if (shouldPlay) {
         const playbackFallbackTimeout = setTimeout(() => {
           if (videoRef.current && !hasTriggeredPlay && shouldPlay) {
-            console.log('Fallback: forcing video playback after timeout');
+            console.log('Fallback: forcing video playback after short timeout');
             hasTriggeredPlay = true;
             videoRef.current.play().catch(e => {
               console.error('Error playing new chunk (fallback):', e);
             });
           }
-        }, 1000); // 1 second fallback
+        }, 100); // Very short timeout for 1-second chunks
         
-        // Clean up timeout if component unmounts
         return () => clearTimeout(playbackFallbackTimeout);
       }
     };
     
-    // Handle loading errors
+    // Set up retry mechanism for loading - shorter times for 1-second chunks
+    let retryCount = 0;
+    const maxRetries = 2; // Fewer retries but faster for short chunks
+    
+    // Handle loading errors with faster retries for short chunks
     const handleLoadError = (e: Event) => {
       console.error(`Error loading chunk ${currentChunkIndex}:`, e);
       
       if (retryCount < maxRetries) {
         retryCount++;
-        console.log(`Retrying chunk load (attempt ${retryCount}/${maxRetries})...`);
+        console.log(`Quickly retrying chunk load (attempt ${retryCount}/${maxRetries})...`);
         
-        // Short delay before retry
+        // Very short delay before retry for 1-second chunks
         setTimeout(() => {
           if (videoRef.current) {
             loadVideo();
           }
-        }, 1000);
+        }, 100); // Much shorter retry delay
       } else {
         console.error(`Failed to load chunk ${currentChunkIndex} after ${maxRetries} attempts`);
         
-        // Move to next chunk if auto-progressing
+        // Skip problematic chunks quickly for 1-second chunks
         if (isAutoProgressing && currentChunkIndex + 1 < sortedUrlsRef.current.length) {
           console.log('Skipping problematic chunk, moving to next one');
           autoProgressingRef.current = true;
@@ -748,48 +807,35 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       }
     };
     
-    // Set up retry mechanism for loading
-    let retryCount = 0;
-    const maxRetries = 3;
-    
     // Load the video
     const cleanup = loadVideo();
     
     // Update chunk duration info
     updateChunkDuration();
     
-    // Define a function to handle playback after the chunk is loaded
+    // For 1-second chunks, try to play immediately and also set up event listeners
     const playVideoWhenReady = () => {
       console.log('playVideoWhenReady called');
       if (videoRef.current && !hasTriggeredPlay) {
-        console.log(`shouldPlay=${shouldPlay}, autoProgressing=${autoProgressingRef.current}, isPlaying=${isPlaying}`);
         if (shouldPlay) {
           console.log('Starting playback of new chunk');
           hasTriggeredPlay = true;
           videoRef.current.play().catch(e => {
             console.error('Error playing new chunk:', e);
-            // If play fails, try again after a short delay (may be needed for some browsers)
-            setTimeout(() => {
-              if (videoRef.current && !videoRef.current.paused) {
-                console.log('Retry playing after error');
-                videoRef.current.play().catch(e2 => {
-                  console.error('Error on second play attempt:', e2);
-                });
-              }
-            }, 250);
+            // Immediate retry for 1-second chunks
+            if (videoRef.current && videoRef.current.paused && shouldPlay) {
+              videoRef.current.play().catch(e2 => {
+                console.error('Error on immediate retry:', e2);
+              });
+            }
           });
         }
         
-        // Reset the auto-progressing flag
+        // Reset flags immediately for 1-second chunks
         autoProgressingRef.current = false;
+        isTransitioningRef.current = false;
         
-        // Reset the transitioning flag after a short delay to allow play event to propagate
-        setTimeout(() => {
-          isTransitioningRef.current = false;
-          console.log('Transition complete, normal playback resumed');
-        }, 100);
-        
-        // Remove all event listeners that could trigger this function
+        // Remove event listeners
         removeEventListeners();
       }
     };
@@ -811,23 +857,19 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       const handleLoadedMetadata = () => {
         if (videoRef.current) {
           videoRef.current.currentTime = timeToSeek;
-          lastChunkTimeRef.current = 0; // Reset after seeking
+          lastChunkTimeRef.current = 0;
           
-          // Play if needed after seeking
+          // Play immediately after seeking for 1-second chunks
           if (shouldPlay && !hasTriggeredPlay) {
-            console.log('Playing after seeking in new chunk');
             hasTriggeredPlay = true;
             videoRef.current.play().catch(e => {
               console.error('Error playing after seek:', e);
             });
           }
           
-          // Reset flags after transition
-          setTimeout(() => {
-            autoProgressingRef.current = false;
-            isTransitioningRef.current = false;
-            console.log('Transition complete (after seek), normal playback resumed');
-          }, 100);
+          // Reset flags immediately
+          autoProgressingRef.current = false;
+          isTransitioningRef.current = false;
           
           removeEventListeners();
         }
@@ -835,10 +877,23 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
       
       videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
     } 
-    // No seeking needed, just play when ready
+    // No seeking needed, just play as soon as possible
     else {
-      // Use multiple event listeners to ensure we catch the video being ready
-      // Different browsers and scenarios may trigger different events
+      // For 1-second chunks, try playing immediately first
+      if (shouldPlay) {
+        // Immediate play attempt - especially important for short chunks
+        setTimeout(() => {
+          if (videoRef.current && !hasTriggeredPlay) {
+            console.log('Immediate play attempt for short chunk');
+            hasTriggeredPlay = true;
+            videoRef.current.play().catch(() => {
+              // Silent catch - will fall back to event listeners
+            });
+          }
+        }, 0);
+      }
+      
+      // Also set up event listeners as fallbacks
       videoRef.current.addEventListener('loadeddata', playVideoWhenReady);
       videoRef.current.addEventListener('canplay', playVideoWhenReady);
       videoRef.current.addEventListener('canplaythrough', playVideoWhenReady);
@@ -847,7 +902,7 @@ const SequentialVideoPlayer = forwardRef<SequentialVideoPlayerHandle, Sequential
     // Add error handler
     videoRef.current.addEventListener('error', handleLoadError);
     
-    // Start preloading the next chunk
+    // For 1-second chunks, aggressively preload multiple chunks ahead
     preloadNextChunk();
     
     // Clean up event listeners if component unmounts during loading

@@ -1,13 +1,27 @@
 import React, { useState, useEffect } from 'react'
 import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle, ChevronUp, ChevronDown as ChevronDownIcon, Clock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { interviewService } from '../firebase/services'
+import interviewService from '../firebase/services'
 import type { Interview } from '../firebase/types'
 import { InterviewStatus } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 
 type SortField = 'date' | 'candidate' | 'position' | 'status'
 type SortOrder = 'asc' | 'desc'
+
+// Helper function to get timezone abbreviation
+const getTimezoneAbbreviation = (timezone: string): string => {
+  if (!timezone) return '';
+  try {
+    const date = new Date();
+    const options: Intl.DateTimeFormatOptions = { timeZone: timezone, timeZoneName: 'short' };
+    const timeString = date.toLocaleString('en-US', options);
+    const abbreviation = timeString.split(' ').pop() || '';
+    return abbreviation;
+  } catch (error) {
+    return '';
+  }
+};
 
 function Interviews() {
   const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d'>('7d')
@@ -232,6 +246,9 @@ function Interviews() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Duration
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Scheduled
+                  </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
@@ -271,6 +288,19 @@ function Interviews() {
                         <div className="text-sm text-gray-900">
                           {interview.duration}
                         </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {interview.startDate && interview.startTime ? (
+                          <div className="text-sm text-gray-900">
+                            {interview.startDate} at {interview.startTime}
+                            <div className="text-xs text-gray-500">
+                              {interview.timezone} 
+                              {interview.timezone && ` (${getTimezoneAbbreviation(interview.timezone)})`}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400">-</div>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button

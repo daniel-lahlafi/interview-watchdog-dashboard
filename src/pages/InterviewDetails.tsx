@@ -3,11 +3,25 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info } from 'lucide-react'
-import { interviewService } from '../firebase/services'
-import type { Interview } from '../firebase/types'
+import interviewService from '../firebase/services'
+import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 import { InterviewStatus } from '../firebase/types'
 import SequentialVideoPlayer, { SequentialVideoPlayerHandle } from '../components/SequentialVideoPlayer'
+
+// Helper function to get timezone abbreviation
+const getTimezoneAbbreviation = (timezone: string): string => {
+  if (!timezone) return '';
+  try {
+    const date = new Date();
+    const options: Intl.DateTimeFormatOptions = { timeZone: timezone, timeZoneName: 'short' };
+    const timeString = date.toLocaleString('en-US', options);
+    const abbreviation = timeString.split(' ').pop() || '';
+    return abbreviation;
+  } catch (error) {
+    return '';
+  }
+};
 
 function InterviewDetails() {
   // React Router hooks
@@ -20,7 +34,7 @@ function InterviewDetails() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [allInterviews, setAllInterviews] = useState<Interview[]>([])
-  
+
   // State for videos
   const [screenVideoUrls, setScreenVideoUrls] = useState<string[]>([])
   const [webcamVideoUrls, setWebcamVideoUrls] = useState<string[]>([])
@@ -32,6 +46,10 @@ function InterviewDetails() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [totalVideoDuration, setTotalVideoDuration] = useState(0)
   
+  // State for anomalies
+  const [anomalies, setAnomalies] = useState<Anomaly[]>([])
+  const [newAnomalyAlert, setNewAnomalyAlert] = useState<boolean>(false)
+  
   // Refs
   const timelineRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<number | null>(null)
@@ -39,6 +57,10 @@ function InterviewDetails() {
   const screenPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
   const webcamPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
 
+  // Add state to track hover on seekbar
+  const [isSeekbarHovered, setIsSeekbarHovered] = useState(false);
+  const [hoverPosition, setHoverPosition] = useState(0);
+  
   // Callbacks - define all callbacks before effects that use them
   const updatePlayState = useCallback(() => {
     // Check if either video is currently playing
@@ -68,6 +90,16 @@ function InterviewDetails() {
       setCurrentTime(time)
     }
   }, [currentTime])
+
+  // Function to handle mouse move over the seekbar
+  const handleSeekbarMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (timelineRef.current) {
+      const { left, width } = timelineRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - left;
+      const boundedMouseX = Math.max(0, Math.min(mouseX, width));
+      setHoverPosition(boundedMouseX / width);
+    }
+  };
 
   // Effects - in a consistent order
   // 1. Data fetching effect
@@ -324,6 +356,49 @@ function InterviewDetails() {
     }
   }, [])
 
+  // New effect for anomaly detection
+  useEffect(() => {
+    // Skip if no interview loaded yet
+    if (!interview || !id) return;
+    
+    // Initialize anomalies from the interview if available
+    if (interview.anomalies && interview.anomalies.length > 0) {
+      setAnomalies(interview.anomalies);
+    }
+    
+    console.log(`Setting up anomaly detection for interview ${id}, status: ${interview.status}`);
+    
+    // Check if this is a live interview
+    const isLive = interview.status === InterviewStatus.Live;
+    
+    // Callback function to handle anomaly updates
+    const handleAnomalyUpdate = (updatedAnomalies: Anomaly[]) => {
+      console.log(`Received ${updatedAnomalies.length} anomalies`);
+      
+      // Check if there are any new anomalies
+      if (updatedAnomalies.length > anomalies.length) {
+        // Show notification for new anomalies
+        setNewAnomalyAlert(true);
+        
+        // Hide the notification after a few seconds
+        setTimeout(() => {
+          setNewAnomalyAlert(false);
+        }, 5000);
+      }
+      
+      // Update anomalies state
+      setAnomalies(updatedAnomalies);
+    };
+    
+    // Set up anomaly detection listener
+    const unsubscribe = interviewService.getAnomalies(id, isLive, handleAnomalyUpdate);
+    
+    // Clean up listener when component unmounts or interview changes
+    return () => {
+      unsubscribe();
+    };
+  }, [id, interview]);
+
   // Event handlers
   const refreshPage = () => {
     window.location.reload()
@@ -334,7 +409,12 @@ function InterviewDetails() {
     
     const { left, width } = timelineRef.current.getBoundingClientRect()
     const clickX = e.clientX - left
-    const pct = clickX / width
+    
+    // Limit click position to within the timeline bounds
+    const boundedClickX = Math.max(0, Math.min(clickX, width))
+    const pct = boundedClickX / width
+    
+    // Calculate the new time position
     const newTime = pct * durationInSeconds
 
     console.log(`Seeking to position: ${newTime.toFixed(2)}s (${(pct * 100).toFixed(2)}% of ${durationInSeconds.toFixed(2)}s)`)
@@ -396,12 +476,47 @@ function InterviewDetails() {
     : (interview && interview.duration 
       ? parseInt(interview.duration.split(':')[0], 10) * 60 + parseInt(interview.duration.split(':')[1], 10)
       : 0)
+  
+  // Calculate the current progress percentage safely
+  const calculateProgressPercentage = () => {
+    if (!durationInSeconds || durationInSeconds <= 0) return 0;
+    // Ensure the percentage never exceeds 100%
+    return Math.min(100, (currentTime / durationInSeconds) * 100);
+  }
+
+  // Safely calculate any time position as a percentage
+  const timeToPercentage = (time: number) => {
+    if (!durationInSeconds || durationInSeconds <= 0) return 0;
+    return Math.min(100, (time / durationInSeconds) * 100);
+  }
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60)
     const s = Math.floor(secs % 60)
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
+
+  // Function to get destructured values safely from the interview
+  const getInterviewDetails = () => {
+    if (!interview) return {
+      candidate: '',
+      position: '',
+      date: '',
+      duration: '',
+    };
+    
+    const {
+      candidate,
+      position,
+      date,
+      duration,
+    } = interview;
+    
+    return { candidate, position, date, duration };
+  };
+
+  // Extract values from interview
+  const { candidate, position, date, duration } = getInterviewDetails();
 
   // guard: loading state
   if (loading) {
@@ -437,14 +552,6 @@ function InterviewDetails() {
     )
   }
 
-  const {
-    candidate,
-    position,
-    date,
-    duration,
-    anomalies = [],
-  } = interview
-
   return (
     <div className="flex h-full overflow-hidden">
       {/* Sidebar */}
@@ -476,22 +583,22 @@ function InterviewDetails() {
       <main className="flex-1 overflow-auto p-6 bg-gray-50">
         <header className="mb-6 flex justify-between items-start">
           <div>
-            <div className="flex items-center gap-4">
-              <h1 className="text-2xl font-semibold text-gray-900">
-                {candidate}
-              </h1>
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                interview.status === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
-                interview.status === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
-                interview.status === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
-                'bg-red-100 text-red-600'
-              }`}>
-                {interview.status}
-              </span>
-            </div>
-            <p className="text-sm text-gray-500">
-              {position} • {date}
-            </p>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-semibold text-gray-900">
+              {candidate}
+            </h1>
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+              interview.status === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
+              interview.status === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
+              interview.status === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
+              'bg-red-100 text-red-600'
+            }`}>
+              {interview.status}
+            </span>
+          </div>
+          <p className="text-sm text-gray-500">
+            {position} • {date}
+          </p>
           </div>
           
           <button 
@@ -507,6 +614,17 @@ function InterviewDetails() {
         {interview.status === InterviewStatus.NotCompleted ? (
           <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
             <p className="text-gray-500">Interview details will appear here when the interview has started</p>
+            
+            {/* Display scheduling information if available */}
+            {interview.startDate && interview.startTime && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                <h3 className="font-medium text-blue-800">Scheduled Interview</h3>
+                <p className="text-blue-600">
+                  This interview is scheduled for {interview.startDate} at {interview.startTime}
+                  {interview.timezone && ` (${interview.timezone} - ${getTimezoneAbbreviation(interview.timezone)})`}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -515,6 +633,31 @@ function InterviewDetails() {
                 <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-yellow-700 text-sm font-medium">{videoError}</p>
+                </div>
+              </div>
+            )}
+
+            {/* New Anomaly Alert */}
+            {newAnomalyAlert && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4 flex items-start gap-2 animate-pulse">
+                <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-red-700 text-sm font-medium">
+                    New suspicious activity detected! Check the anomalies section.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Live Status Indicator */}
+            {interview?.status === InterviewStatus.Live && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex items-start gap-2">
+                <Info className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-blue-700 text-sm font-medium">
+                    <span className="inline-block h-2 w-2 rounded-full bg-red-500 mr-2 animate-pulse"></span>
+                    Live Interview - Suspicious activity will be detected in real-time
+                  </p>
                 </div>
               </div>
             )}
@@ -528,37 +671,84 @@ function InterviewDetails() {
                 </span>
               </div>
               
-              <div 
+              <div
                 ref={timelineRef}
-                className="relative h-6 bg-gray-100 rounded-full cursor-pointer mb-4"
+                className="relative h-8 bg-gray-100 rounded-full cursor-pointer mb-4 shadow-inner overflow-hidden group"
                 onClick={handleTimelineClick}
+                onMouseEnter={() => setIsSeekbarHovered(true)}
+                onMouseLeave={() => setIsSeekbarHovered(false)}
+                onMouseMove={handleSeekbarMouseMove}
               >
-                {/* Progress bar */}
+                {/* Background track */}
+                <div className="absolute h-full w-full bg-gray-200"></div>
+                
+                {/* Progress bar - played section */}
                 <div
-                  className="absolute h-full bg-blue-100 rounded-l-full"
+                  className="absolute h-full bg-gradient-to-r from-blue-300 to-blue-400 rounded-l-full transition-all duration-100"
                   style={{
-                    width: `${(currentTime / durationInSeconds) * 100}%`,
+                    width: `${calculateProgressPercentage()}%`,
                   }}
                 />
-                {/* Current position indicator */}
+                
+                {/* Hover indicator */}
+                {isSeekbarHovered && (
+                  <>
+                    {/* Hover position line */}
+                    <div 
+                      className="absolute h-full w-px bg-gray-700 z-10"
+                      style={{ left: `${hoverPosition * 100}%` }}
+                    />
+                    {/* Hover time tooltip */}
+                    <div 
+                      className="absolute -top-8 py-1 px-2 bg-gray-800 text-white text-xs rounded transform -translate-x-1/2 opacity-90 z-40 font-medium"
+                      style={{ left: `${hoverPosition * 100}%` }}
+                    >
+                      {formatTime(hoverPosition * durationInSeconds)}
+                    </div>
+                  </>
+                )}
+                
+                {/* Progress indicator line */}
                 <div 
-                  className="absolute h-6 w-6 bg-blue-500 rounded-full -ml-3 top-0"
+                  className="absolute h-full w-1 bg-white shadow-md z-30 transition-all duration-100"
                   style={{
-                    left: `${(currentTime / durationInSeconds) * 100}%`,
+                    left: `${calculateProgressPercentage()}%`,
                   }}
                 />
+                
                 {/* Anomaly markers */}
                 {anomalies.map((a, i) => (
                   <div
                     key={i}
-                    className="absolute top-1/2 -translate-y-1/2 z-10"
+                    className="absolute top-1/2 -translate-y-1/2 z-20"
                     style={{
-                      left: `${(a.time / durationInSeconds) * 100}%`,
+                      left: `${timeToPercentage(a.time)}%`,
                     }}
                     title={`${a.type} @ ${formatTime(a.time)}`}
                   >
-                    <AlertTriangle className="h-4 w-4 text-yellow-500 -ml-2" />
+                    <div className="h-6 w-1 bg-yellow-500 rounded-full shadow-md"></div>
+                    <AlertTriangle className="h-4 w-4 text-yellow-500 -ml-1.5 -mt-5" />
                   </div>
+                ))}
+                
+                {/* Time markers */}
+                <div className="absolute top-0 left-0 w-full h-full flex justify-between pointer-events-none">
+                  {durationInSeconds > 0 && [0, 0.25, 0.5, 0.75, 1].map((percentage) => (
+                    <div 
+                      key={percentage}
+                      className="h-2 w-px bg-gray-300 absolute top-3"
+                      style={{ left: `${percentage * 100}%` }}
+                    />
+                  ))}
+                </div>
+              </div>
+              
+              {/* Time labels */}
+              <div className="flex justify-between text-xs text-gray-500 px-1 -mt-2 mb-4">
+                {durationInSeconds > 0 && [0, 0.25, 0.5, 0.75, 1].map((percentage) => (
+                  <span key={percentage}>
+                    {formatTime(percentage * durationInSeconds)}
+                  </span>
                 ))}
               </div>
               
@@ -671,21 +861,35 @@ function InterviewDetails() {
 
             {/* Anomalies list */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 className="text-lg font-medium mb-4">Anomalies</h2>
+              <h2 className="text-lg font-medium mb-4">
+                Anomalies 
+                {anomalies.length > 0 && (
+                  <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                    {anomalies.length}
+                  </span>
+                )}
+              </h2>
               {anomalies.length === 0 ? (
-                <p className="text-gray-500">No anomalies detected during this interview.</p>
+                <p className="text-gray-500">
+                  {interview?.status === InterviewStatus.Live 
+                    ? "No anomalies detected yet. Monitoring in real-time." 
+                    : "No anomalies detected during this interview."}
+                </p>
               ) : (
                 <div className="space-y-2">
                   {anomalies.map((a, i) => (
                     <div
-                      key={i}
+                      key={a.id || i}
                       className="flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer"
                       onClick={() => {
                         setCurrentTime(a.time);
                         setVideoTime(a.time);
                       }}
                     >
-                      <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                      <AlertTriangle className={`h-4 w-4 ${
+                        a.severity === 'high' ? 'text-red-500' : 
+                        a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
+                      }`} />
                       <span className="font-medium">{a.type}</span>
                       <span className="text-gray-400">
                         at {formatTime(a.time)}

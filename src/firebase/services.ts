@@ -1,11 +1,17 @@
-import { collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, query, where, runTransaction, getFirestore, setDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, query, where, runTransaction, getFirestore, setDoc, onSnapshot, Timestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, listAll, getBlob } from 'firebase/storage';
 import { db, storage } from './config';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import type { Interview, Anomaly } from './types';
 import { InterviewStatus } from './types';
 
+// Initialize Firebase Functions
+const functions = getFunctions();
+const scheduleInterviewTransition = httpsCallable(functions, 'scheduleInterviewTransition');
+
 // Collections
 const interviewsCollection = collection(db, 'interviews');
+const cheatingCollection = collection(db, 'cheating');
 
 // Function to generate a random 6-digit code
 const generateRandomCode = (): string => {
@@ -179,5 +185,123 @@ export const interviewService = {
       console.error('Error retrieving webcam video chunks:', error);
       throw error;
     }
+  },
+  
+  // Get anomalies for an interview (real-time or one-time)
+  getAnomalies: (interviewId: string, isLive: boolean, callback: (anomalies: Anomaly[]) => void) => {
+    console.log(`Setting up anomaly detection for interview: ${interviewId}, isLive: ${isLive}`);
+    
+    // Create a query against the cheating collection
+    const q = query(cheatingCollection, where("interviewId", "==", interviewId));
+    
+    if (isLive) {
+      console.log('Setting up real-time anomaly listener');
+      // For live interviews, set up a real-time listener
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        console.log(`Real-time anomaly update: ${snapshot.docs.length} anomalies found`);
+        
+        const anomalies: Anomaly[] = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            time: data.timestamp || 0, // Use timestamp as the time for the anomaly
+            type: data.type || 'Unknown',
+            description: data.description || '',
+            severity: data.severity || 'medium',
+            metadata: data // Include all original data
+          } as Anomaly;
+        });
+        
+        // Sort anomalies by time
+        anomalies.sort((a, b) => a.time - b.time);
+        
+        // Call the callback with the updated anomalies
+        callback(anomalies);
+      }, (error) => {
+        console.error('Error in real-time anomaly listener:', error);
+      });
+      
+      // Return the unsubscribe function for cleanup
+      return unsubscribe;
+    } else {
+      console.log('Performing one-time fetch of anomalies');
+      // For completed interviews, just do a one-time fetch
+      getDocs(q)
+        .then((snapshot) => {
+          console.log(`One-time anomaly fetch: ${snapshot.docs.length} anomalies found`);
+          
+          const anomalies: Anomaly[] = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              time: data.timestamp || 0,
+              type: data.type || 'Unknown',
+              description: data.description || '',
+              severity: data.severity || 'medium',
+              metadata: data
+            } as Anomaly;
+          });
+          
+          // Sort anomalies by time
+          anomalies.sort((a, b) => a.time - b.time);
+          
+          // Call the callback with the fetched anomalies
+          callback(anomalies);
+        })
+        .catch((error) => {
+          console.error('Error fetching anomalies:', error);
+        });
+      
+      // Return a no-op function for consistency
+      return () => {};
+    }
+  },
+
+  // Schedule a new interview with specific date and time
+  scheduleInterview: async (interview: Omit<Interview, 'id' | 'status' | 'accessCode'>, scheduledDateTime: Date): Promise<{ id: string; accessCode: string }> => {
+    try {
+      // Generate a random access code
+      const code = generateRandomCode();
+      const interviewId = `${interview.intervieweeEmail}:${code}`;
+      
+      // Convert the scheduled date/time to a Firestore timestamp
+      const scheduledTimestamp = Timestamp.fromDate(scheduledDateTime);
+      
+      // Calculate the "go live" time (5 minutes before the scheduled time)
+      const goLiveDate = new Date(scheduledDateTime);
+      goLiveDate.setMinutes(goLiveDate.getMinutes() - 5);
+      const goLiveTimestamp = Timestamp.fromDate(goLiveDate);
+      
+      // Create the interview data with scheduling information
+      const interviewData = {
+        ...interview,
+        id: interviewId,
+        status: InterviewStatus.NotCompleted,
+        accessCode: code,
+        scheduledDateTime: scheduledTimestamp,
+        goLiveDateTime: goLiveTimestamp
+      };
+
+      // Save the interview to Firestore
+      await setDoc(doc(interviewsCollection, interviewId), interviewData);
+      
+      // Call the Firebase Function to schedule the status transition
+      await scheduleInterviewTransition({
+        interviewId: interviewId,
+        scheduledTime: scheduledDateTime.getTime(),
+        goLiveTime: goLiveDate.getTime(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone // Include local timezone info
+      });
+      
+      console.log(`Interview scheduled for ${scheduledDateTime.toLocaleString()}, will go live at ${goLiveDate.toLocaleString()}`);
+      
+      return { id: interviewId, accessCode: code };
+    } catch (error) {
+      console.error('Error scheduling interview:', error);
+      throw error;
+    }
   }
-}; 
+};
+
+// Make sure it's also exported as default
+export default interviewService; 

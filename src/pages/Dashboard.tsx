@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { interviewService } from '../firebase/services'
+import interviewService from '../firebase/services'
 import { InterviewStatus } from '../firebase/types'
 import {
   BarChart,
