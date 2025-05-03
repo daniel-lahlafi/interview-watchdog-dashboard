@@ -1,6 +1,6 @@
 // src/pages/InterviewDetails.tsx
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info } from 'lucide-react'
 import { interviewService } from '../firebase/services'
@@ -10,30 +10,67 @@ import { InterviewStatus } from '../firebase/types'
 import SequentialVideoPlayer, { SequentialVideoPlayerHandle } from '../components/SequentialVideoPlayer'
 
 function InterviewDetails() {
+  // React Router hooks
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
+  
+  // State for interview data
   const [interview, setInterview] = useState<Interview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [allInterviews, setAllInterviews] = useState<Interview[]>([])
+  
+  // State for videos
   const [screenVideoUrls, setScreenVideoUrls] = useState<string[]>([])
   const [webcamVideoUrls, setWebcamVideoUrls] = useState<string[]>([])
   const [loadingVideo, setLoadingVideo] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
   const [currentChunk, setCurrentChunk] = useState({ screen: 0, webcam: 0 })
   const [totalChunks, setTotalChunks] = useState({ screen: 0, webcam: 0 })
-  
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [totalVideoDuration, setTotalVideoDuration] = useState(0)
+  
+  // Refs
   const timelineRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<number | null>(null)
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
-  // Initialize refs for direct access to video elements
-  const screenPlayerRef = useRef<SequentialVideoPlayerHandle>(null);
-  const webcamPlayerRef = useRef<SequentialVideoPlayerHandle>(null);
+  const screenPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
+  const webcamPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
 
+  // Callbacks - define all callbacks before effects that use them
+  const updatePlayState = useCallback(() => {
+    // Check if either video is currently playing
+    const screenIsPlaying = screenPlayerRef.current?.videoElement && 
+                          !screenPlayerRef.current.videoElement.paused
+    const webcamIsPlaying = webcamPlayerRef.current?.videoElement && 
+                          !webcamPlayerRef.current.videoElement.paused
+    
+    // If either video is playing, consider the state as playing
+    const newIsPlaying = Boolean(screenIsPlaying || webcamIsPlaying)
+    
+    // Only update if the state has changed
+    if (newIsPlaying !== isPlaying) {
+      console.log(`Updating play state to: ${newIsPlaying}`)
+      setIsPlaying(newIsPlaying)
+    }
+  }, [isPlaying])
+
+  const handleDurationChange = useCallback((duration: number) => {
+    console.log(`Total video duration updated: ${duration.toFixed(2)}s`)
+    setTotalVideoDuration(duration)
+  }, [])
+
+  const handleVideoTimeUpdate = useCallback((time: number) => {
+    // Only update if the time difference is significant to avoid small oscillations
+    if (Math.abs(time - currentTime) > 0.5) {
+      setCurrentTime(time)
+    }
+  }, [currentTime])
+
+  // Effects - in a consistent order
+  // 1. Data fetching effect
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -64,16 +101,16 @@ function InterviewDetails() {
               const screenPromise = interviewService.getMergedScreenRecording(interviewData.id)
                 .catch(e => {
                   console.error('Failed to fetch screen recording:', e)
-                  return [] as string[];
-                });
+                  return [] as string[]
+                })
                 
               const webcamPromise = interviewService.getMergedWebcamRecording(interviewData.id)
                 .catch(e => {
                   console.error('Failed to fetch webcam recording:', e)
-                  return [] as string[];
-                });
+                  return [] as string[]
+                })
               
-              const [screenUrls, webcamUrls] = await Promise.all([screenPromise, webcamPromise]);
+              const [screenUrls, webcamUrls] = await Promise.all([screenPromise, webcamPromise])
               
               console.log('Videos fetched:', { 
                 screenUrls: screenUrls.length > 0 ? screenUrls.length : 0, 
@@ -130,23 +167,28 @@ function InterviewDetails() {
     }
   }, [id, user?.uid])
   
-  // Handle video playback loop
+  // 2. Animation frame effect for playback tracking
   useEffect(() => {
     const updateTimeline = () => {
+      // Get the current time from either video
       if (screenPlayerRef.current) {
         setCurrentTime(screenPlayerRef.current.currentTime)
       } else if (webcamPlayerRef.current) {
         setCurrentTime(webcamPlayerRef.current.currentTime)
       }
 
+      // Only continue the animation frame if we're playing
       if (isPlaying) {
         animationRef.current = requestAnimationFrame(updateTimeline)
       }
     }
 
+    // Start or stop the animation frame based on playing state
     if (isPlaying) {
+      console.log('Starting playback tracking')
       animationRef.current = requestAnimationFrame(updateTimeline)
     } else if (animationRef.current) {
+      console.log('Stopping playback tracking')
       cancelAnimationFrame(animationRef.current)
     }
 
@@ -157,121 +199,209 @@ function InterviewDetails() {
     }
   }, [isPlaying])
 
-  // Ensure videos stay in sync
+  // 3. Video event listeners effect
   useEffect(() => {
+    // Flag to track if we're in the middle of a chunk transition
+    let isTransitioning = false
+    
+    // Create a debounced update function to avoid rapid state changes
+    let updateTimeout: NodeJS.Timeout | null = null
+    const debouncedUpdatePlayState = () => {
+      if (updateTimeout) clearTimeout(updateTimeout)
+      updateTimeout = setTimeout(() => {
+        if (!isTransitioning) {
+          updatePlayState()
+        }
+      }, 100)
+    }
+    
     const handleVideoPlay = () => {
-      setIsPlaying(true);
-    };
+      console.log('Video play event detected')
+      setIsPlaying(true)
+    }
 
     const handleVideoPause = () => {
-      setIsPlaying(false);
-    };
+      console.log('Video pause event detected')
+      // Don't immediately update play state, wait to see if it's just a transition
+      debouncedUpdatePlayState()
+    }
     
     const handleVideoEnded = () => {
-      // The sequential player will handle moving to the next chunk
-      // We don't need to set isPlaying to false here
-    };
+      // Set the transition flag to prevent unwanted state updates
+      isTransitioning = true
+      console.log('Video ended event detected - transitioning to next chunk')
+      
+      // Reset the transition flag after a delay
+      setTimeout(() => {
+        isTransitioning = false
+      }, 1000) // Longer timeout to cover the entire transition
+    }
+    
+    const handleChunkChange = () => {
+      // Mark that we're in a transition
+      isTransitioning = true
+      console.log('Chunk changing, maintaining play state')
+      
+      // Reset the transition flag after a delay
+      setTimeout(() => {
+        isTransitioning = false
+      }, 1000)
+    }
 
-    // Use a ref to store the current video elements to avoid dependency issues
-    const screenVideo = screenPlayerRef.current?.videoElement;
-    const webcamVideo = webcamPlayerRef.current?.videoElement;
+    // Set up event listeners on both videos
+    const screenVideo = screenPlayerRef.current?.videoElement
+    const webcamVideo = webcamPlayerRef.current?.videoElement
 
     if (screenVideo) {
-      screenVideo.addEventListener('play', handleVideoPlay);
-      screenVideo.addEventListener('pause', handleVideoPause);
-      screenVideo.addEventListener('ended', handleVideoEnded);
+      screenVideo.addEventListener('play', handleVideoPlay)
+      screenVideo.addEventListener('pause', handleVideoPause)
+      screenVideo.addEventListener('ended', handleVideoEnded)
+      screenVideo.addEventListener('seeking', handleChunkChange)
     }
 
     if (webcamVideo) {
-      webcamVideo.addEventListener('play', handleVideoPlay);
-      webcamVideo.addEventListener('pause', handleVideoPause);
-      webcamVideo.addEventListener('ended', handleVideoEnded);
+      webcamVideo.addEventListener('play', handleVideoPlay)
+      webcamVideo.addEventListener('pause', handleVideoPause)
+      webcamVideo.addEventListener('ended', handleVideoEnded)
+      webcamVideo.addEventListener('seeking', handleChunkChange)
     }
 
     return () => {
+      if (updateTimeout) clearTimeout(updateTimeout)
+      
       if (screenVideo) {
-        screenVideo.removeEventListener('play', handleVideoPlay);
-        screenVideo.removeEventListener('pause', handleVideoPause);
-        screenVideo.removeEventListener('ended', handleVideoEnded);
+        screenVideo.removeEventListener('play', handleVideoPlay)
+        screenVideo.removeEventListener('pause', handleVideoPause)
+        screenVideo.removeEventListener('ended', handleVideoEnded)
+        screenVideo.removeEventListener('seeking', handleChunkChange)
       }
 
       if (webcamVideo) {
-        webcamVideo.removeEventListener('play', handleVideoPlay);
-        webcamVideo.removeEventListener('pause', handleVideoPause);
-        webcamVideo.removeEventListener('ended', handleVideoEnded);
+        webcamVideo.removeEventListener('play', handleVideoPlay)
+        webcamVideo.removeEventListener('pause', handleVideoPause)
+        webcamVideo.removeEventListener('ended', handleVideoEnded)
+        webcamVideo.removeEventListener('seeking', handleChunkChange)
       }
-    };
-  // Remove dependencies that change on every render
-  }, []);
+    }
+  }, [updatePlayState])
 
-  // Sync playback between videos
+  // 4. Periodic sync effect
   useEffect(() => {
-    const syncVideos = () => {
-      const screenVideo = screenPlayerRef.current?.videoElement;
-      const webcamVideo = webcamPlayerRef.current?.videoElement;
-      
-      if (!screenVideo || !webcamVideo) return;
-      
-      // Sync play events
-      const handleScreenPlay = () => {
-        if (webcamVideo.paused) {
-          webcamVideo.play().catch(e => console.error('Error syncing webcam play:', e));
-        }
-      };
-      
-      const handleWebcamPlay = () => {
-        if (screenVideo.paused) {
-          screenVideo.play().catch(e => console.error('Error syncing screen play:', e));
-        }
-      };
-      
-      // Sync pause events
-      const handleScreenPause = () => {
-        if (!webcamVideo.paused) {
-          webcamVideo.pause();
-        }
-      };
-      
-      const handleWebcamPause = () => {
-        if (!screenVideo.paused) {
-          screenVideo.pause();
-        }
-      };
-      
-      // Add event listeners
-      screenVideo.addEventListener('play', handleScreenPlay);
-      webcamVideo.addEventListener('play', handleWebcamPlay);
-      screenVideo.addEventListener('pause', handleScreenPause);
-      webcamVideo.addEventListener('pause', handleWebcamPause);
-      
-      // Cleanup function
-      return () => {
-        screenVideo.removeEventListener('play', handleScreenPlay);
-        webcamVideo.removeEventListener('play', handleWebcamPlay);
-        screenVideo.removeEventListener('pause', handleScreenPause);
-        webcamVideo.removeEventListener('pause', handleWebcamPause);
-      };
-    };
-    
-    // Check players every 500ms until both are available
-    const intervalId = setInterval(() => {
-      if (screenPlayerRef.current?.videoElement && webcamPlayerRef.current?.videoElement) {
-        clearInterval(intervalId);
-        const cleanup = syncVideos();
-        return () => {
-          if (cleanup) cleanup();
-        };
-      }
-    }, 500);
+    const checkInterval = setInterval(() => {
+      updatePlayState()
+    }, 500)
     
     return () => {
-      clearInterval(intervalId);
-    };
-  }, []);
+      clearInterval(checkInterval)
+    }
+  }, [updatePlayState])
 
+  // 5. Video time sync effect
+  useEffect(() => {
+    const syncVideosTime = () => {
+      const screenVideo = screenPlayerRef.current?.videoElement
+      const webcamVideo = webcamPlayerRef.current?.videoElement
+      
+      if (!screenVideo || !webcamVideo) return
+      
+      // Only sync if the difference is significant (more than 0.3 seconds)
+      const timeDifference = Math.abs(screenVideo.currentTime - webcamVideo.currentTime)
+      if (timeDifference > 0.3) {
+        // Don't sync during seeking operations to avoid loops
+        if (!screenVideo.seeking && !webcamVideo.seeking) {
+          // Use screen video as the primary source of truth
+          console.log(`Syncing video times (diff: ${timeDifference.toFixed(2)}s)`)
+          webcamVideo.currentTime = screenVideo.currentTime
+        }
+      }
+    }
+    
+    // Run the sync function periodically
+    const syncInterval = setInterval(syncVideosTime, 2000)
+    
+    return () => {
+      clearInterval(syncInterval)
+    }
+  }, [])
+
+  // Event handlers
   const refreshPage = () => {
-    window.location.reload();
-  };
+    window.location.reload()
+  }
+
+  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!timelineRef.current) return
+    
+    const { left, width } = timelineRef.current.getBoundingClientRect()
+    const clickX = e.clientX - left
+    const pct = clickX / width
+    const newTime = pct * durationInSeconds
+
+    console.log(`Seeking to position: ${newTime.toFixed(2)}s (${(pct * 100).toFixed(2)}% of ${durationInSeconds.toFixed(2)}s)`)
+    
+    setCurrentTime(newTime)
+    setVideoTime(newTime)
+  }
+
+  const setVideoTime = (time: number) => {
+    // First seek the screen recording
+    if (screenPlayerRef.current) {
+      screenPlayerRef.current.seekToTime(time)
+      
+      // Also explicitly seek the webcam to maintain sync
+      // (Don't rely solely on the sync mechanism)
+      if (webcamPlayerRef.current) {
+        webcamPlayerRef.current.seekToTime(time)
+        console.log('Seeking both videos to:', time.toFixed(2))
+      } else {
+        console.log('Only screen video present, seeking to:', time.toFixed(2))
+      }
+    } 
+    // If no screen recording, seek webcam directly
+    else if (webcamPlayerRef.current) {
+      console.log('Only webcam video present, seeking to:', time.toFixed(2))
+      webcamPlayerRef.current.seekToTime(time)
+    }
+  }
+
+  const togglePlayPause = () => {
+    if (isPlaying) {
+      // Pause both players
+      if (screenPlayerRef.current) screenPlayerRef.current.pause()
+      if (webcamPlayerRef.current) webcamPlayerRef.current.pause()
+      setIsPlaying(false)
+    } else {
+      // Play both players
+      if (screenPlayerRef.current) screenPlayerRef.current.play()
+      if (webcamPlayerRef.current) webcamPlayerRef.current.play()
+      setIsPlaying(true)
+    }
+  }
+
+  const jumpBackward = () => {
+    const newTime = Math.max(0, currentTime - 10)
+    setCurrentTime(newTime)
+    setVideoTime(newTime)
+  }
+
+  const jumpForward = () => {
+    const newTime = Math.min(durationInSeconds, currentTime + 10)
+    setCurrentTime(newTime)
+    setVideoTime(newTime)
+  }
+
+  // Computed values
+  const durationInSeconds = totalVideoDuration > 0 
+    ? totalVideoDuration 
+    : (interview && interview.duration 
+      ? parseInt(interview.duration.split(':')[0], 10) * 60 + parseInt(interview.duration.split(':')[1], 10)
+      : 0)
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60)
+    const s = Math.floor(secs % 60)
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  }
 
   // guard: loading state
   if (loading) {
@@ -314,72 +444,6 @@ function InterviewDetails() {
     duration,
     anomalies = [],
   } = interview
-
-  const durationInSeconds =
-    parseInt(duration.split(':')[0], 10) * 60 +
-    parseInt(duration.split(':')[1], 10)
-
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60)
-    const s = Math.floor(secs % 60)
-    return `${m.toString().padStart(2, '0')}:${s
-      .toString()
-      .padStart(2, '0')}`
-  }
-
-  const handleTimelineClick = (
-    e: React.MouseEvent<HTMLDivElement>
-  ) => {
-    if (!timelineRef.current) return;
-    
-    const { left, width } = timelineRef.current.getBoundingClientRect()
-    const clickX = e.clientX - left
-    const pct = clickX / width
-    const newTime = pct * durationInSeconds
-
-    setCurrentTime(newTime)
-    setVideoTime(newTime)
-  }
-
-  const setVideoTime = (time: number) => {
-    if (screenPlayerRef.current) screenPlayerRef.current.seekToTime(time);
-    if (webcamPlayerRef.current) webcamPlayerRef.current.seekToTime(time);
-  }
-
-  const togglePlayPause = () => {
-    if (isPlaying) {
-      // Pause both players
-      if (screenPlayerRef.current) screenPlayerRef.current.pause();
-      if (webcamPlayerRef.current) webcamPlayerRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      // Play both players
-      if (screenPlayerRef.current) screenPlayerRef.current.play();
-      if (webcamPlayerRef.current) webcamPlayerRef.current.play();
-      setIsPlaying(true);
-    }
-  }
-
-  const jumpBackward = () => {
-    const newTime = Math.max(0, currentTime - 10);
-    setCurrentTime(newTime);
-    if (screenPlayerRef.current) screenPlayerRef.current.seekToTime(newTime);
-    if (webcamPlayerRef.current) webcamPlayerRef.current.seekToTime(newTime);
-  }
-
-  const jumpForward = () => {
-    const newTime = Math.min(durationInSeconds, currentTime + 10);
-    setCurrentTime(newTime);
-    if (screenPlayerRef.current) screenPlayerRef.current.seekToTime(newTime);
-    if (webcamPlayerRef.current) webcamPlayerRef.current.seekToTime(newTime);
-  }
-
-  const handleVideoTimeUpdate = (time: number) => {
-    // Only update if the time difference is significant to avoid small oscillations
-    if (Math.abs(time - currentTime) > 0.5) {
-      setCurrentTime(time);
-    }
-  }
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -460,7 +524,7 @@ function InterviewDetails() {
               <div className="flex justify-between items-center mb-2">
                 <h2 className="text-lg font-medium">Playback Controls</h2>
                 <span className="text-sm text-gray-500">
-                  {formatTime(currentTime)} / {duration}
+                  {formatTime(currentTime)} / {totalVideoDuration > 0 ? formatTime(totalVideoDuration) : duration}
                 </span>
               </div>
               
@@ -556,7 +620,14 @@ function InterviewDetails() {
                     onChunkChange={(index, total) => {
                       setCurrentChunk(prev => ({ ...prev, screen: index }));
                       setTotalChunks(prev => ({ ...prev, screen: total }));
+                      
+                      // When screen video changes chunks, make sure webcam is in sync
+                      if (webcamPlayerRef.current && screenPlayerRef.current) {
+                        const currentTime = screenPlayerRef.current.currentTime;
+                        webcamPlayerRef.current.seekToTime(currentTime);
+                      }
                     }}
+                    onDurationChange={handleDurationChange}
                   />
                 )}
               </div>
@@ -586,6 +657,12 @@ function InterviewDetails() {
                     onChunkChange={(index, total) => {
                       setCurrentChunk(prev => ({ ...prev, webcam: index }));
                       setTotalChunks(prev => ({ ...prev, webcam: total }));
+                      
+                      // When webcam video changes chunks, make sure screen is in sync
+                      if (screenPlayerRef.current && webcamPlayerRef.current) {
+                        const currentTime = webcamPlayerRef.current.currentTime;
+                        screenPlayerRef.current.seekToTime(currentTime);
+                      }
                     }}
                   />
                 )}
