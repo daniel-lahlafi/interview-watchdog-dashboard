@@ -32,11 +32,15 @@ const getVideoChunks = async (folderPath: string): Promise<string[]> => {
       throw new Error('No video chunks found');
     }
     
-    // Sort chunks by name to ensure correct order
-    const sortedItems = [...listResult.items].sort((a, b) => {
-      // Extract the numbers from names like "chunk001.webm"
-      const aMatch = a.name.match(/chunk(\d+)\.webm/);
-      const bMatch = b.name.match(/chunk(\d+)\.webm/);
+    // Find initialization segment and media segments
+    const initSegmentItem = listResult.items.find(item => item.name === 'init.mp4');
+    const mediaSegmentItems = listResult.items.filter(item => item.name.endsWith('.m4s'));
+    
+    // Sort media chunks by name to ensure correct order
+    const sortedMediaItems = [...mediaSegmentItems].sort((a, b) => {
+      // Extract the numbers from names like "chunk001.m4s"
+      const aMatch = a.name.match(/chunk(\d+)/);
+      const bMatch = b.name.match(/chunk(\d+)/);
       
       if (aMatch && bMatch) {
         const aNum = parseInt(aMatch[1], 10);
@@ -48,18 +52,31 @@ const getVideoChunks = async (folderPath: string): Promise<string[]> => {
       return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
     });
     
-    console.log('Sorted chunks:', sortedItems.map(item => item.name).join(', '));
+    console.log('Found segments:', 
+      `init: ${initSegmentItem ? 'yes' : 'no'}, ` +
+      `media: ${sortedMediaItems.map(item => item.name).join(', ')}`);
 
-    // Get download URLs for all chunks
-    const chunkUrls = await Promise.all(
-      sortedItems.map(async (item) => {
+    // Get download URLs for init segment and media chunks
+    const urls: string[] = [];
+    
+    // Add initialization segment first if it exists
+    if (initSegmentItem) {
+      const initUrl = await getDownloadURL(initSegmentItem);
+      urls.push(initUrl);
+    }
+    
+    // Add all media segments in order
+    const mediaUrls = await Promise.all(
+      sortedMediaItems.map(async (item) => {
         const url = await getDownloadURL(item);
         return url;
       })
     );
     
-    console.log(`Got ${chunkUrls.length} chunk URLs`);
-    return chunkUrls;
+    urls.push(...mediaUrls);
+    
+    console.log(`Got ${urls.length} segment URLs (init + media chunks)`);
+    return urls;
   } catch (error) {
     console.error('Error in getVideoChunks:', error);
     throw error;
@@ -124,6 +141,12 @@ export const interviewService = {
     await updateDoc(docRef, interview);
   },
 
+  // Create a new document with a specific ID
+  createNewDocument: async (id: string, data: any): Promise<void> => {
+    const docRef = doc(db, 'interviews', id);
+    await setDoc(docRef, data);
+  },
+
   // Delete interview
   deleteInterview: async (id: string): Promise<void> => {
     const docRef = doc(db, 'interviews', id);
@@ -142,22 +165,22 @@ export const interviewService = {
     try {
       // Replace special characters in email with underscores
       const sanitizedEmailCode = emailCode.replace(/[@.]/g, '_');
-      const folderPath = `recordings/screen/${sanitizedEmailCode}`;
+      const folderPath = `streams/screen/${sanitizedEmailCode}`;
       console.log(`Fetching screen recordings from: ${folderPath}`);
       
-      // Get all chunk URLs 
-      const chunkUrls = await getVideoChunks(folderPath);
+      // Get all segment URLs (init + chunks) 
+      const segmentUrls = await getVideoChunks(folderPath);
       
-      if (chunkUrls.length === 0) {
-        console.log('No screen recording chunks found');
-        throw new Error('No screen recording chunks found');
+      if (segmentUrls.length === 0) {
+        console.log('No screen recording segments found');
+        throw new Error('No screen recording segments found');
       }
       
-      console.log(`Returning ${chunkUrls.length} screen chunk URLs`);
-      return chunkUrls;
+      console.log(`Returning ${segmentUrls.length} screen segment URLs`);
+      return segmentUrls;
       
     } catch (error) {
-      console.error('Error retrieving screen video chunks:', error);
+      console.error('Error retrieving screen video segments:', error);
       throw error;
     }
   },
@@ -167,22 +190,22 @@ export const interviewService = {
     try {
       // Replace special characters in email with underscores
       const sanitizedEmailCode = emailCode.replace(/[@.]/g, '_');
-      const folderPath = `recordings/camera/${sanitizedEmailCode}`;
+      const folderPath = `streams/camera/${sanitizedEmailCode}`;
       console.log(`Fetching webcam recordings from: ${folderPath}`);
       
-      // Get all chunk URLs
-      const chunkUrls = await getVideoChunks(folderPath);
+      // Get all segment URLs (init + chunks)
+      const segmentUrls = await getVideoChunks(folderPath);
       
-      if (chunkUrls.length === 0) {
-        console.log('No webcam recording chunks found');
-        throw new Error('No webcam recording chunks found');
+      if (segmentUrls.length === 0) {
+        console.log('No webcam recording segments found');
+        throw new Error('No webcam recording segments found');
       }
       
-      console.log(`Returning ${chunkUrls.length} webcam chunk URLs`);
-      return chunkUrls;
+      console.log(`Returning ${segmentUrls.length} webcam segment URLs`);
+      return segmentUrls;
       
     } catch (error) {
-      console.error('Error retrieving webcam video chunks:', error);
+      console.error('Error retrieving webcam video segments:', error);
       throw error;
     }
   },
@@ -212,8 +235,8 @@ export const interviewService = {
           } as Anomaly;
         });
         
-        // Sort anomalies by time
-        anomalies.sort((a, b) => a.time - b.time);
+        // Sort anomalies by time in reverse order (newest first)
+        anomalies.sort((a, b) => b.time - a.time);
         
         // Call the callback with the updated anomalies
         callback(anomalies);
@@ -242,8 +265,8 @@ export const interviewService = {
             } as Anomaly;
           });
           
-          // Sort anomalies by time
-          anomalies.sort((a, b) => a.time - b.time);
+          // Sort anomalies by time in reverse order (newest first)
+          anomalies.sort((a, b) => b.time - a.time);
           
           // Call the callback with the fetched anomalies
           callback(anomalies);
@@ -304,4 +327,4 @@ export const interviewService = {
 };
 
 // Make sure it's also exported as default
-export default interviewService; 
+export default interviewService;

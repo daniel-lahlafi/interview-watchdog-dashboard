@@ -2,12 +2,13 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio } from 'lucide-react'
+import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio, Edit, X, Check } from 'lucide-react'
 import interviewService from '../firebase/services'
 import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 import { InterviewStatus, getEffectiveInterviewStatus, isInterviewLive } from '../firebase/types'
-import SequentialVideoPlayer, { SequentialVideoPlayerHandle } from '../components/SequentialVideoPlayer'
+import SequentialVideoPlayer from '../components/SequentialVideoPlayer'
+import { DEFAULT_TIMEZONES } from './CreateInterview'
 
 // Helper function to get timezone abbreviation
 const getTimezoneAbbreviation = (timezone: string): string => {
@@ -46,38 +47,53 @@ function InterviewDetails() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [totalVideoDuration, setTotalVideoDuration] = useState(0)
   
+  // State for WebRTC live streaming
+  const [webRTCStream, setWebRTCStream] = useState<any | null>(null)
+  const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null)
+  const [isStreamLoading, setIsStreamLoading] = useState(false)
+  const [streamError, setStreamError] = useState<string | null>(null)
+  const liveVideoRef = useRef<HTMLVideoElement>(null)
+  
   // State for anomalies
   const [anomalies, setAnomalies] = useState<Anomaly[]>([])
   const [newAnomalyAlert, setNewAnomalyAlert] = useState<boolean>(false)
+  
+  // Add a new state variable to track new anomalies
+  const [newAnomaliesCount, setNewAnomaliesCount] = useState(0);
+  const [newAnomalyIds, setNewAnomalyIds] = useState<Set<string>>(new Set());
+  
+  // Add a new state variable for sound notification preference
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
+  
+  // Add a new state variable for the delete confirmation modal
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  
+  // Add state variables for the copy animation
+  const [accessCodeCopied, setAccessCodeCopied] = useState(false);
+  const [accessCodeCopied2, setAccessCodeCopied2] = useState(false); // For the second button in not completed view
   
   // Refs
   const timelineRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<number | null>(null)
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const screenPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
-  const webcamPlayerRef = useRef<SequentialVideoPlayerHandle>(null)
 
   // Add state to track hover on seekbar
   const [isSeekbarHovered, setIsSeekbarHovered] = useState(false);
   const [hoverPosition, setHoverPosition] = useState(0);
+
+  // Add state variables for edit modal
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [editFormData, setEditFormData] = useState({
+    intervieweeEmail: '',
+    startDate: '',
+    startTime: '',
+    timezone: '',
+    duration: '',
+  });
   
-  // Callbacks - define all callbacks before effects that use them
-  const updatePlayState = useCallback(() => {
-    // Check if either video is currently playing
-    const screenIsPlaying = screenPlayerRef.current?.videoElement && 
-                          !screenPlayerRef.current.videoElement.paused
-    const webcamIsPlaying = webcamPlayerRef.current?.videoElement && 
-                          !webcamPlayerRef.current.videoElement.paused
-    
-    // If either video is playing, consider the state as playing
-    const newIsPlaying = Boolean(screenIsPlaying || webcamIsPlaying)
-    
-    // Only update if the state has changed
-    if (newIsPlaying !== isPlaying) {
-      console.log(`Updating play state to: ${newIsPlaying}`)
-      setIsPlaying(newIsPlaying)
-    }
-  }, [isPlaying])
+  // New state variable for edit form error and success
+  const [editError, setEditError] = useState<string | null>(null);
+  const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
 
   const handleDurationChange = useCallback((duration: number) => {
     console.log(`Total video duration updated: ${duration.toFixed(2)}s`)
@@ -123,10 +139,10 @@ function InterviewDetails() {
           const interviewData = await interviewService.getInterviewById(id)
           setInterview(interviewData)
           
-          // Check if the interview is completed
-          if (interviewData && interviewData.status !== InterviewStatus.NotCompleted) {
+          // Check if the interview has recordings available (completed OR live)
+          if (interviewData && (interviewData.status !== InterviewStatus.NotCompleted || isInterviewLive(interviewData))) {
             setLoadingVideo(true)
-            console.log('Interview is completed, loading videos')
+            console.log('Interview has recordings, loading videos')
             
             try {
               // Fetch all chunks for both videos
@@ -196,165 +212,13 @@ function InterviewDetails() {
       if (loadingTimeoutRef.current) {
         clearTimeout(loadingTimeoutRef.current)
       }
+      
+      // Close WebRTC connection if exists
+      if (peerConnection) {
+        peerConnection.close()
+      }
     }
   }, [id, user?.uid])
-  
-  // 2. Animation frame effect for playback tracking
-  useEffect(() => {
-    const updateTimeline = () => {
-      // Get the current time from either video
-      if (screenPlayerRef.current) {
-        setCurrentTime(screenPlayerRef.current.currentTime)
-      } else if (webcamPlayerRef.current) {
-        setCurrentTime(webcamPlayerRef.current.currentTime)
-      }
-
-      // Only continue the animation frame if we're playing
-      if (isPlaying) {
-        animationRef.current = requestAnimationFrame(updateTimeline)
-      }
-    }
-
-    // Start or stop the animation frame based on playing state
-    if (isPlaying) {
-      console.log('Starting playback tracking')
-      animationRef.current = requestAnimationFrame(updateTimeline)
-    } else if (animationRef.current) {
-      console.log('Stopping playback tracking')
-      cancelAnimationFrame(animationRef.current)
-    }
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [isPlaying])
-
-  // 3. Video event listeners effect
-  useEffect(() => {
-    // Flag to track if we're in the middle of a chunk transition
-    let isTransitioning = false
-    
-    // Create a debounced update function to avoid rapid state changes
-    let updateTimeout: NodeJS.Timeout | null = null
-    const debouncedUpdatePlayState = () => {
-      if (updateTimeout) clearTimeout(updateTimeout)
-      updateTimeout = setTimeout(() => {
-        if (!isTransitioning) {
-          updatePlayState()
-        }
-      }, 100)
-    }
-    
-    const handleVideoPlay = () => {
-      console.log('Video play event detected')
-      setIsPlaying(true)
-    }
-
-    const handleVideoPause = () => {
-      console.log('Video pause event detected')
-      // Don't immediately update play state, wait to see if it's just a transition
-      debouncedUpdatePlayState()
-    }
-    
-    const handleVideoEnded = () => {
-      // Set the transition flag to prevent unwanted state updates
-      isTransitioning = true
-      console.log('Video ended event detected - transitioning to next chunk')
-      
-      // Reset the transition flag after a delay
-      setTimeout(() => {
-        isTransitioning = false
-      }, 1000) // Longer timeout to cover the entire transition
-    }
-    
-    const handleChunkChange = () => {
-      // Mark that we're in a transition
-      isTransitioning = true
-      console.log('Chunk changing, maintaining play state')
-      
-      // Reset the transition flag after a delay
-      setTimeout(() => {
-        isTransitioning = false
-      }, 1000)
-    }
-
-    // Set up event listeners on both videos
-    const screenVideo = screenPlayerRef.current?.videoElement
-    const webcamVideo = webcamPlayerRef.current?.videoElement
-
-    if (screenVideo) {
-      screenVideo.addEventListener('play', handleVideoPlay)
-      screenVideo.addEventListener('pause', handleVideoPause)
-      screenVideo.addEventListener('ended', handleVideoEnded)
-      screenVideo.addEventListener('seeking', handleChunkChange)
-    }
-
-    if (webcamVideo) {
-      webcamVideo.addEventListener('play', handleVideoPlay)
-      webcamVideo.addEventListener('pause', handleVideoPause)
-      webcamVideo.addEventListener('ended', handleVideoEnded)
-      webcamVideo.addEventListener('seeking', handleChunkChange)
-    }
-
-    return () => {
-      if (updateTimeout) clearTimeout(updateTimeout)
-      
-      if (screenVideo) {
-        screenVideo.removeEventListener('play', handleVideoPlay)
-        screenVideo.removeEventListener('pause', handleVideoPause)
-        screenVideo.removeEventListener('ended', handleVideoEnded)
-        screenVideo.removeEventListener('seeking', handleChunkChange)
-      }
-
-      if (webcamVideo) {
-        webcamVideo.removeEventListener('play', handleVideoPlay)
-        webcamVideo.removeEventListener('pause', handleVideoPause)
-        webcamVideo.removeEventListener('ended', handleVideoEnded)
-        webcamVideo.removeEventListener('seeking', handleChunkChange)
-      }
-    }
-  }, [updatePlayState])
-
-  // 4. Periodic sync effect
-  useEffect(() => {
-    const checkInterval = setInterval(() => {
-      updatePlayState()
-    }, 500)
-    
-    return () => {
-      clearInterval(checkInterval)
-    }
-  }, [updatePlayState])
-
-  // 5. Video time sync effect
-  useEffect(() => {
-    const syncVideosTime = () => {
-      const screenVideo = screenPlayerRef.current?.videoElement
-      const webcamVideo = webcamPlayerRef.current?.videoElement
-      
-      if (!screenVideo || !webcamVideo) return
-      
-      // Only sync if the difference is significant (more than 0.3 seconds)
-      const timeDifference = Math.abs(screenVideo.currentTime - webcamVideo.currentTime)
-      if (timeDifference > 0.3) {
-        // Don't sync during seeking operations to avoid loops
-        if (!screenVideo.seeking && !webcamVideo.seeking) {
-          // Use screen video as the primary source of truth
-          console.log(`Syncing video times (diff: ${timeDifference.toFixed(2)}s)`)
-          webcamVideo.currentTime = screenVideo.currentTime
-        }
-      }
-    }
-    
-    // Run the sync function periodically
-    const syncInterval = setInterval(syncVideosTime, 2000)
-    
-    return () => {
-      clearInterval(syncInterval)
-    }
-  }, [])
 
   // New effect for anomaly detection
   useEffect(() => {
@@ -366,10 +230,11 @@ function InterviewDetails() {
       setAnomalies(interview.anomalies);
     }
     
-    console.log(`Setting up anomaly detection for interview ${id}, status: ${interview.status}`);
+    // Get the effective status to determine if interview is live
+    const effectiveStatus = getEffectiveInterviewStatus(interview);
+    const isLive = effectiveStatus === InterviewStatus.Live;
     
-    // Check if this is a live interview
-    const isLive = interview.status === InterviewStatus.Live;
+    console.log(`Setting up anomaly detection for interview ${id}, status: ${interview.status}, effective status: ${effectiveStatus}, isLive: ${isLive}`);
     
     // Callback function to handle anomaly updates
     const handleAnomalyUpdate = (updatedAnomalies: Anomaly[]) => {
@@ -377,17 +242,107 @@ function InterviewDetails() {
       
       // Check if there are any new anomalies
       if (updatedAnomalies.length > anomalies.length) {
+        // Calculate how many new anomalies were added
+        const newCount = updatedAnomalies.length - anomalies.length;
+        setNewAnomaliesCount(prev => prev + newCount);
+        
+        // Track which anomalies are new (by their ID)
+        const newIds = new Set(newAnomalyIds);
+        updatedAnomalies.slice(-newCount).forEach(anomaly => {
+          if (anomaly.id) {
+            newIds.add(anomaly.id);
+          }
+        });
+        setNewAnomalyIds(newIds);
+        
         // Show notification for new anomalies
         setNewAnomalyAlert(true);
+        
+        // Try to play alert sound if the interview is live and sound is enabled
+        if (effectiveStatus === InterviewStatus.Live && soundEnabled) {
+          try {
+            // Check if we can find an existing sound file, or use a Web API approach
+            const soundOptions = [
+              '/notification-sound.mp3',
+              '/notification-sound.wav',
+              '/assets/notification-sound.mp3',
+              '/sounds/notification.mp3',
+              '/alert.mp3'
+            ];
+            
+            // Try to create and play a simple beep using the Web Audio API
+            // This is a fallback if no sound files are available
+            const playBeep = () => {
+              try {
+                const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.value = 800; // Value in hertz
+                gainNode.gain.value = 0.1;
+                
+                oscillator.start(0);
+                oscillator.stop(audioContext.currentTime + 0.2);
+                console.log('Played alert beep using Web Audio API');
+                return true;
+              } catch (audioError) {
+                console.log('Could not create beep sound:', audioError);
+                return false;
+              }
+            };
+            
+            // Try each sound file until one works
+            const tryPlaySound = async () => {
+              // First try audio files
+              for (const soundPath of soundOptions) {
+                try {
+                  const audio = new Audio(soundPath);
+                  // Add a timeout to avoid hanging on load
+                  const playPromise = audio.play();
+                  
+                  if (playPromise !== undefined) {
+                    const playSuccess = await Promise.race([
+                      playPromise.then(() => true).catch(() => false),
+                      new Promise(resolve => setTimeout(() => resolve(false), 1000))
+                    ]);
+                    
+                    if (playSuccess) {
+                      console.log(`Successfully played notification sound: ${soundPath}`);
+                      return true;
+                    }
+                  }
+                } catch (e) {
+                  console.log(`Could not play sound file ${soundPath}:`, e);
+                }
+              }
+              
+              // If no audio files worked, try the beep
+              return playBeep();
+            };
+            
+            // Try to play the sound but don't wait for it
+            tryPlaySound().catch(e => console.log('Sound playback completely failed:', e));
+          } catch (error) {
+            console.log('Error handling notification sound', error);
+            // Non-critical error, so we just log it and continue
+          }
+        }
         
         // Hide the notification after a few seconds
         setTimeout(() => {
           setNewAnomalyAlert(false);
-        }, 5000);
+        }, 8000); // Longer timeout for better visibility
       }
       
-      // Update anomalies state
-      setAnomalies(updatedAnomalies);
+      // Sort anomalies in reverse chronological order (newest first)
+      const sortedAnomalies = [...updatedAnomalies].sort((a, b) => b.time - a.time);
+      
+      // Update anomalies state with the reverse-sorted array
+      setAnomalies(sortedAnomalies);
     };
     
     // Set up anomaly detection listener
@@ -397,103 +352,11 @@ function InterviewDetails() {
     return () => {
       unsubscribe();
     };
-  }, [id, interview]);
+  }, [id, interview, anomalies.length, soundEnabled]);
 
   // Event handlers
   const refreshPage = () => {
     window.location.reload()
-  }
-
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineRef.current) return
-    
-    const { left, width } = timelineRef.current.getBoundingClientRect()
-    const clickX = e.clientX - left
-    
-    // Limit click position to within the timeline bounds
-    const boundedClickX = Math.max(0, Math.min(clickX, width))
-    const pct = boundedClickX / width
-    
-    // Calculate the new time position
-    const newTime = pct * durationInSeconds
-
-    console.log(`Seeking to position: ${newTime.toFixed(2)}s (${(pct * 100).toFixed(2)}% of ${durationInSeconds.toFixed(2)}s)`)
-    
-    setCurrentTime(newTime)
-    setVideoTime(newTime)
-  }
-
-  const setVideoTime = (time: number) => {
-    // First seek the screen recording
-    if (screenPlayerRef.current) {
-      screenPlayerRef.current.seekToTime(time)
-      
-      // Also explicitly seek the webcam to maintain sync
-      // (Don't rely solely on the sync mechanism)
-      if (webcamPlayerRef.current) {
-        webcamPlayerRef.current.seekToTime(time)
-        console.log('Seeking both videos to:', time.toFixed(2))
-      } else {
-        console.log('Only screen video present, seeking to:', time.toFixed(2))
-      }
-    } 
-    // If no screen recording, seek webcam directly
-    else if (webcamPlayerRef.current) {
-      console.log('Only webcam video present, seeking to:', time.toFixed(2))
-      webcamPlayerRef.current.seekToTime(time)
-    }
-  }
-
-  const togglePlayPause = () => {
-    if (isPlaying) {
-      // Pause both players
-      if (screenPlayerRef.current) screenPlayerRef.current.pause()
-      if (webcamPlayerRef.current) webcamPlayerRef.current.pause()
-      setIsPlaying(false)
-    } else {
-      // Play both players
-      if (screenPlayerRef.current) screenPlayerRef.current.play()
-      if (webcamPlayerRef.current) webcamPlayerRef.current.play()
-      setIsPlaying(true)
-    }
-  }
-
-  const jumpBackward = () => {
-    const newTime = Math.max(0, currentTime - 10)
-    setCurrentTime(newTime)
-    setVideoTime(newTime)
-  }
-
-  const jumpForward = () => {
-    const newTime = Math.min(durationInSeconds, currentTime + 10)
-    setCurrentTime(newTime)
-    setVideoTime(newTime)
-  }
-
-  // Computed values
-  const durationInSeconds = totalVideoDuration > 0 
-    ? totalVideoDuration 
-    : (interview && interview.duration 
-      ? parseInt(interview.duration.split(':')[0], 10) * 60 + parseInt(interview.duration.split(':')[1], 10)
-      : 0)
-  
-  // Calculate the current progress percentage safely
-  const calculateProgressPercentage = () => {
-    if (!durationInSeconds || durationInSeconds <= 0) return 0;
-    // Ensure the percentage never exceeds 100%
-    return Math.min(100, (currentTime / durationInSeconds) * 100);
-  }
-
-  // Safely calculate any time position as a percentage
-  const timeToPercentage = (time: number) => {
-    if (!durationInSeconds || durationInSeconds <= 0) return 0;
-    return Math.min(100, (time / durationInSeconds) * 100);
-  }
-
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60)
-    const s = Math.floor(secs % 60)
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
   // Function to get destructured values safely from the interview
@@ -520,6 +383,145 @@ function InterviewDetails() {
 
   // Add a live badge at the top of the page if it's currently live
   const effectiveStatus = interview ? getEffectiveInterviewStatus(interview) : InterviewStatus.NotCompleted;
+
+  // Add a delete interview handler
+  const handleDeleteInterview = async () => {
+    if (!interview || !interview.id) return;
+    
+    try {
+      setLoading(true);
+      await interviewService.deleteInterview(interview.id);
+      
+      // Navigate back to interviews list after successful deletion
+      navigate('/interviews');
+    } catch (error) {
+      console.error('Error deleting interview:', error);
+      setError('Failed to delete interview. Please try again.');
+    } finally {
+      setLoading(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  // Format time for display
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  // Function to set video time
+  const setVideoTime = (time: number) => {
+    if (totalVideoDuration > 0) {
+      const newTime = Math.min(Math.max(0, time), totalVideoDuration);
+      setCurrentTime(newTime);
+      
+      const videoElements = document.querySelectorAll('video');
+      videoElements.forEach(video => {
+        if (video && !isNaN(newTime)) {
+          try {
+            video.currentTime = newTime;
+          } catch (e) {
+            console.error('Error setting video time:', e);
+          }
+        }
+      });
+    }
+  };
+  
+  // Handle opening the edit modal
+  const handleOpenEditModal = () => {
+    if (interview) {
+      setEditFormData({
+        intervieweeEmail: interview.intervieweeEmail || '',
+        startDate: interview.startDate || '',
+        startTime: interview.startTime || '',
+        timezone: interview.timezone || '',
+        duration: interview.duration?.toString() || '',
+      });
+      setShowEditModal(true);
+    }
+  };
+  
+  // Handle edit form input changes
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setEditFormData(prev => ({ ...prev, [name]: value }));
+  };
+  
+  // Handle saving interview updates
+  const handleSaveInterview = async () => {
+    if (!interview || !interview.id) return;
+    
+    try {
+      setLoading(true);
+      setEditError(null);
+      setUpdateSuccess(false);
+      
+      // Check if email is changing - important because document ID includes the email
+      const isEmailChanging = interview.intervieweeEmail !== editFormData.intervieweeEmail;
+      
+      // Extract the access code from the old ID (format is email:code)
+      const accessCode = interview.accessCode;
+      
+      // Prepare updated interview data
+      const updatedData = {
+        intervieweeEmail: editFormData.intervieweeEmail,
+        startDate: editFormData.startDate,
+        startTime: editFormData.startTime,
+        timezone: editFormData.timezone,
+        duration: editFormData.duration,
+      };
+      
+      if (isEmailChanging) {
+        // Generate new ID based on new email and existing code
+        const newId = `${editFormData.intervieweeEmail}:${accessCode}`;
+        
+        // Create a complete interview object to move to the new document
+        const completeUpdatedInterview = {
+          ...interview,
+          ...updatedData,
+          id: newId
+        };
+        
+        // Create a copy without the id property for Firestore (id is in the document path)
+        const { id, ...interviewWithoutId } = completeUpdatedInterview;
+        
+        // Create a new document with the updated ID
+        await interviewService.createNewDocument(newId, interviewWithoutId);
+        
+        // Delete the old document
+        await interviewService.deleteInterview(interview.id);
+        
+        // Update local state with the new interview ID
+        setInterview({ ...completeUpdatedInterview, id: newId });
+        
+        // Also update the URL to reflect the new ID without reloading the page
+        window.history.replaceState(null, '', `/interviews/${newId}`);
+      } else {
+        // If email is not changing, just update the existing document
+        await interviewService.updateInterview(interview.id, updatedData);
+        
+        // Update local state
+        setInterview({ ...interview, ...updatedData });
+      }
+      
+      // Show success message
+      setUpdateSuccess(true);
+      
+      // Close the modal after a short delay
+      setTimeout(() => {
+        setShowEditModal(false);
+        setUpdateSuccess(false);
+      }, 1500);
+      
+    } catch (error) {
+      console.error('Error updating interview:', error);
+      setEditError('Failed to update interview. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // guard: loading state
   if (loading) {
@@ -557,63 +559,91 @@ function InterviewDetails() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-gray-200 bg-white overflow-auto">
-        <h2 className="px-4 py-3 font-semibold text-gray-800">
-          All Interviews
-        </h2>
-        <ul>
-          {allInterviews.map((iv) => (
-            <li
-              key={iv.id}
-              onClick={() => navigate(`/interviews/${iv.id}`)}
-              className={`flex items-center px-4 py-2 cursor-pointer hover:bg-gray-100 ${
-                iv.id === interview.id
-                  ? "bg-gray-100"
-                  : ""
-              }`}
-            >
-              <Eye className="h-4 w-4 text-gray-600 mr-2" />
-              <span className="text-sm text-gray-700">
-                {iv.candidate}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </aside>
 
       {/* Detail pane */}
       <main className="flex-1 overflow-auto p-6 bg-gray-50">
         <header className="mb-6 flex justify-between items-start">
           <div>
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-semibold text-gray-900">
-              {candidate}
-            </h1>
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-              effectiveStatus === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
-              effectiveStatus === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
-              effectiveStatus === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
-              effectiveStatus === InterviewStatus.Live ? 'bg-blue-100 text-blue-600' :
-              'bg-red-100 text-red-600'
-            }`}>
-              {effectiveStatus === InterviewStatus.Live && <Radio className="inline-block mr-1 h-3 w-3 animate-pulse" />}
-              {effectiveStatus}
-            </span>
-          </div>
-          <p className="text-sm text-gray-500">
-            {position} • {date}
-          </p>
+            <div className="flex items-center gap-4">
+              <h1 className="text-2xl font-semibold text-gray-900">
+                {candidate}
+              </h1>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                effectiveStatus === InterviewStatus.NotCompleted ? 'bg-gray-100 text-gray-600' :
+                effectiveStatus === InterviewStatus.Completed ? 'bg-green-100 text-green-600' :
+                effectiveStatus === InterviewStatus.SuspiciousActivity ? 'bg-yellow-100 text-yellow-600' :
+                effectiveStatus === InterviewStatus.Live ? 'bg-blue-100 text-blue-600' :
+                'bg-red-100 text-red-600'
+              }`}>
+                {effectiveStatus === InterviewStatus.Live && <Radio className="inline-block mr-1 h-3 w-3 animate-pulse" />}
+                {effectiveStatus}
+              </span>
+            </div>
+            <p className="text-sm text-gray-500 mt-1">
+              {position} • {date}
+            </p>
+            <div className="flex items-center mt-2">
+              <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md inline-flex items-center relative">
+                <span className="font-medium mr-1">Access Code:</span> {interview.accessCode}
+                <button 
+                  className="ml-2 text-blue-600 hover:text-blue-800"
+                  onClick={() => {
+                    navigator.clipboard.writeText(interview.accessCode);
+                    // Show "Copied" animation instead of alert
+                    setAccessCodeCopied(true);
+                    setTimeout(() => setAccessCodeCopied(false), 1500);
+                  }}
+                  title="Copy access code"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-copy">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                  </svg>
+                </button>
+                
+                {/* Copied animation */}
+                {accessCodeCopied && (
+                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100">
+                    Copied!
+                  </div>
+                )}
+              </div>
+              <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md ml-2">
+                <span className="font-medium">Email:</span> {interview.intervieweeEmail}
+              </div>
+            </div>
           </div>
           
-          <button 
-            onClick={refreshPage}
-            className="px-3 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded flex items-center gap-1"
-            title="Refresh page"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleOpenEditModal}
+              className="px-3 py-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded flex items-center gap-1"
+              title="Edit interview"
+            >
+              <Edit className="h-4 w-4" />
+              Edit
+            </button>
+            <button 
+              onClick={() => setShowDeleteConfirm(true)}
+              className="px-3 py-2 text-sm text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded flex items-center gap-1"
+              title="Delete interview"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-trash">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              Delete
+            </button>
+            
+            <button 
+              onClick={refreshPage}
+              className="px-3 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded flex items-center gap-1"
+              title="Refresh page"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
         </header>
 
         {effectiveStatus === InterviewStatus.Live && (
@@ -631,19 +661,142 @@ function InterviewDetails() {
         )}
 
         {interview.status === InterviewStatus.NotCompleted ? (
-          <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-            <p className="text-gray-500">Interview details will appear here when the interview has started</p>
-            
-            {/* Display scheduling information if available */}
-            {interview.startDate && interview.startTime && (
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg">
-                <h3 className="font-medium text-blue-800">Scheduled Interview</h3>
-                <p className="text-blue-600">
-                  This interview is scheduled for {interview.startDate} at {interview.startTime}
-                  {interview.timezone && ` (${interview.timezone} - ${getTimezoneAbbreviation(interview.timezone)})`}
+          <div>
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+              <div className="mt-4 bg-gray-50 p-4 inline-block rounded-lg">
+                <h3 className="font-medium text-gray-800">Interview Access Information</h3>
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-2">
+                  <div className="text-sm flex items-center relative">
+                    <span className="font-medium">Access Code:</span> 
+                    <span className="mx-2 font-mono bg-gray-100 px-2 py-1 rounded">{interview.accessCode}</span>
+                    <button 
+                      className="text-blue-600 hover:text-blue-800"
+                      onClick={() => {
+                        navigator.clipboard.writeText(interview.accessCode);
+                        // Show "Copied" animation instead of alert
+                        setAccessCodeCopied2(true);
+                        setTimeout(() => setAccessCodeCopied2(false), 1500);
+                      }}
+                      title="Copy access code"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-copy">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                      </svg>
+                    </button>
+                    
+                    {/* Copied animation */}
+                    {accessCodeCopied2 && (
+                      <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100">
+                        Copied!
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-sm">
+                    <span className="font-medium">Email:</span> {interview.intervieweeEmail}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-3">
+                  The interviewee will need both the access code and their email to join the interview
                 </p>
               </div>
-            )}
+              
+              {/* Display scheduling information if available */}
+              {interview.startDate && interview.startTime && (
+                <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                  <h3 className="font-medium text-blue-800">Scheduled Interview</h3>
+                  <p className="text-blue-600">
+                    This interview is scheduled for {interview.startDate} at {interview.startTime}
+                    {interview.timezone && ` (${interview.timezone} - ${getTimezoneAbbreviation(interview.timezone)})`}
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            {/* Anomalies list for scheduled interviews */}
+            <div id="anomalies-section" className="bg-white rounded-xl border border-gray-200 p-6 mt-6">
+              <h2 className="text-lg font-medium mb-4 flex items-center justify-between">
+                <span className="flex items-center">
+                  Anomalies 
+                  {anomalies.length > 0 && (
+                    <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                      {anomalies.length}
+                    </span>
+                  )}
+                </span>
+                
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={soundEnabled}
+                      onChange={() => setSoundEnabled(prev => !prev)}
+                      className="h-3 w-3"
+                    />
+                    <span className="whitespace-nowrap">Sound Alerts</span>
+                  </label>
+                  
+                  {effectiveStatus === InterviewStatus.Live && (
+                    <span className="flex items-center text-sm text-blue-600">
+                      <Radio className="h-3 w-3 mr-1 animate-pulse" />
+                      Real-time monitoring
+                      {newAnomaliesCount > 0 && (
+                        <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-800 text-xs rounded-full animate-pulse">
+                          +{newAnomaliesCount} new
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </h2>
+              
+              {anomalies.length === 0 ? (
+                <p className="text-gray-500">
+                  {effectiveStatus === InterviewStatus.Live 
+                    ? "No anomalies detected yet. Monitoring in real-time." 
+                    : "No anomalies detected for this interview yet."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {anomalies.map((a, i) => (
+                    <div
+                      key={a.id || i}
+                      className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
+                        a.id && newAnomalyIds.has(a.id) ? 'bg-yellow-50 border-l-2 border-yellow-500' : ''
+                      }`}
+                      onClick={() => {
+                        // Remove from new anomalies when clicked
+                        if (a.id && newAnomalyIds.has(a.id)) {
+                          const updatedNewIds = new Set(newAnomalyIds);
+                          updatedNewIds.delete(a.id);
+                          setNewAnomalyIds(updatedNewIds);
+                        }
+                      }}
+                    >
+                      <AlertTriangle className={`h-4 w-4 ${
+                        a.id && newAnomalyIds.has(a.id) ? 'text-red-500 animate-pulse' :
+                        a.severity === 'high' ? 'text-red-500' : 
+                        a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
+                      }`} />
+                      <span className="font-medium">
+                        {a.type}
+                        {a.id && newAnomalyIds.has(a.id) && (
+                          <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
+                        )}
+                      </span>
+                      {a.metadata?.timeElapsedFormatted && (
+                        <span className="text-gray-400">
+                          at {a.metadata?.timeElapsedFormatted }
+                        </span>
+                      )}
+                      {a.description && (
+                        <span className="text-gray-600 ml-2">- {a.description}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <>
@@ -664,220 +817,67 @@ function InterviewDetails() {
                   <p className="text-red-700 text-sm font-medium">
                     New suspicious activity detected! Check the anomalies section.
                   </p>
+                  {effectiveStatus === InterviewStatus.NotCompleted && (
+                    <p className="text-red-600 text-xs mt-1">
+                      Real-time monitoring is active - scroll down to see the latest anomalies
+                    </p>
+                  )}
+                  <div className="mt-2">
+                    <button 
+                      onClick={() => {
+                        // Scroll to the anomalies section
+                        document.getElementById('anomalies-section')?.scrollIntoView({ behavior: 'smooth' });
+                        setNewAnomalyAlert(false);
+                      }}
+                      className="text-xs px-2 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded"
+                    >
+                      View Anomalies
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Timeline controls */}
-            <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-lg font-medium">Playback Controls</h2>
-                <span className="text-sm text-gray-500">
-                  {formatTime(currentTime)} / {totalVideoDuration > 0 ? formatTime(totalVideoDuration) : duration}
-                </span>
-              </div>
-              
-              <div
-                ref={timelineRef}
-                className="relative h-8 bg-gray-100 rounded-full cursor-pointer mb-4 shadow-inner overflow-hidden group"
-                onClick={handleTimelineClick}
-                onMouseEnter={() => setIsSeekbarHovered(true)}
-                onMouseLeave={() => setIsSeekbarHovered(false)}
-                onMouseMove={handleSeekbarMouseMove}
-              >
-                {/* Background track */}
-                <div className="absolute h-full w-full bg-gray-200"></div>
-                
-                {/* Progress bar - played section */}
-                <div
-                  className="absolute h-full bg-gradient-to-r from-blue-300 to-blue-400 rounded-l-full transition-all duration-100"
-                  style={{
-                    width: `${calculateProgressPercentage()}%`,
-                  }}
-                />
-                
-                {/* Hover indicator */}
-                {isSeekbarHovered && (
-                  <>
-                    {/* Hover position line */}
-                    <div 
-                      className="absolute h-full w-px bg-gray-700 z-10"
-                      style={{ left: `${hoverPosition * 100}%` }}
-                    />
-                    {/* Hover time tooltip */}
-                    <div 
-                      className="absolute -top-8 py-1 px-2 bg-gray-800 text-white text-xs rounded transform -translate-x-1/2 opacity-90 z-40 font-medium"
-                      style={{ left: `${hoverPosition * 100}%` }}
-                    >
-                      {formatTime(hoverPosition * durationInSeconds)}
-                    </div>
-                  </>
-                )}
-                
-                {/* Progress indicator line */}
-                <div 
-                  className="absolute h-full w-1 bg-white shadow-md z-30 transition-all duration-100"
-                  style={{
-                    left: `${calculateProgressPercentage()}%`,
-                  }}
-                />
-                
-                {/* Anomaly markers */}
-                {anomalies.map((a, i) => (
-                  <div
-                    key={i}
-                    className="absolute top-1/2 -translate-y-1/2 z-20"
-                    style={{
-                      left: `${timeToPercentage(a.time)}%`,
-                    }}
-                    title={`${a.type} @ ${formatTime(a.time)}`}
-                  >
-                    <div className="h-6 w-1 bg-yellow-500 rounded-full shadow-md"></div>
-                    <AlertTriangle className="h-4 w-4 text-yellow-500 -ml-1.5 -mt-5" />
-                  </div>
-                ))}
-                
-                {/* Time markers */}
-                <div className="absolute top-0 left-0 w-full h-full flex justify-between pointer-events-none">
-                  {durationInSeconds > 0 && [0, 0.25, 0.5, 0.75, 1].map((percentage) => (
-                    <div 
-                      key={percentage}
-                      className="h-2 w-px bg-gray-300 absolute top-3"
-                      style={{ left: `${percentage * 100}%` }}
-                    />
-                  ))}
-                </div>
-              </div>
-              
-              {/* Time labels */}
-              <div className="flex justify-between text-xs text-gray-500 px-1 -mt-2 mb-4">
-                {durationInSeconds > 0 && [0, 0.25, 0.5, 0.75, 1].map((percentage) => (
-                  <span key={percentage}>
-                    {formatTime(percentage * durationInSeconds)}
-                  </span>
-                ))}
-              </div>
-              
-              {/* Control buttons */}
-              <div className="flex justify-center items-center gap-4">
-                <button 
-                  onClick={jumpBackward}
-                  className="p-2 rounded-full hover:bg-gray-100"
-                  title="Jump back 10 seconds"
-                >
-                  <SkipBack className="h-6 w-6 text-gray-700" />
-                </button>
-                <button 
-                  onClick={togglePlayPause}
-                  className="p-2 rounded-full hover:bg-gray-100"
-                  title={isPlaying ? "Pause" : "Play"}
-                >
-                  {isPlaying ? (
-                    <PauseCircle className="h-8 w-8 text-blue-600" />
-                  ) : (
-                    <PlayCircle className="h-8 w-8 text-blue-600" />
-                  )}
-                </button>
-                <button 
-                  onClick={jumpForward}
-                  className="p-2 rounded-full hover:bg-gray-100"
-                  title="Jump forward 10 seconds"
-                >
-                  <SkipForward className="h-6 w-6 text-gray-700" />
-                </button>
-              </div>
-            </div>
-            
-            {/* Videos */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <h2 className="text-lg font-medium mb-4">
-                  Screen Recording
-                  {screenVideoUrls.length > 1 && (
-                    <span className="ml-2 text-sm text-gray-500">
-                      (Chunk {currentChunk.screen + 1}/{totalChunks.screen})
-                    </span>
-                  )}
-                </h2>
-                {loadingVideo ? (
-                  <div className="w-full aspect-video bg-black rounded-lg flex items-center justify-center">
-                    <p className="text-white">Loading video...</p>
-                  </div>
-                ) : screenVideoUrls.length === 0 ? (
-                  <div className="w-full aspect-video bg-gray-100 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">No screen recording available</p>
-                  </div>
-                ) : (
-                  <SequentialVideoPlayer
-                    ref={screenPlayerRef}
-                    videoUrls={screenVideoUrls}
-                    className="w-full aspect-video bg-black rounded-lg"
-                    onTimeUpdate={handleVideoTimeUpdate}
-                    onChunkChange={(index, total) => {
-                      setCurrentChunk(prev => ({ ...prev, screen: index }));
-                      setTotalChunks(prev => ({ ...prev, screen: total }));
-                      
-                      // When screen video changes chunks, make sure webcam is in sync
-                      if (webcamPlayerRef.current && screenPlayerRef.current) {
-                        const currentTime = screenPlayerRef.current.currentTime;
-                        webcamPlayerRef.current.seekToTime(currentTime);
-                      }
-                    }}
-                    onDurationChange={handleDurationChange}
-                  />
-                )}
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-4">
-                <h2 className="text-lg font-medium mb-4">
-                  Webcam Recording
-                  {webcamVideoUrls.length > 1 && (
-                    <span className="ml-2 text-sm text-gray-500">
-                      (Chunk {currentChunk.webcam + 1}/{totalChunks.webcam})
-                    </span>
-                  )}
-                </h2>
-                {loadingVideo ? (
-                  <div className="w-full aspect-video bg-black rounded-lg flex items-center justify-center">
-                    <p className="text-white">Loading video...</p>
-                  </div>
-                ) : webcamVideoUrls.length === 0 ? (
-                  <div className="w-full aspect-video bg-gray-100 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">No webcam recording available</p>
-                  </div>
-                ) : (
-                  <SequentialVideoPlayer
-                    ref={webcamPlayerRef}
-                    videoUrls={webcamVideoUrls}
-                    className="w-full aspect-video bg-black rounded-lg"
-                    onTimeUpdate={handleVideoTimeUpdate}
-                    onChunkChange={(index, total) => {
-                      setCurrentChunk(prev => ({ ...prev, webcam: index }));
-                      setTotalChunks(prev => ({ ...prev, webcam: total }));
-                      
-                      // When webcam video changes chunks, make sure screen is in sync
-                      if (screenPlayerRef.current && webcamPlayerRef.current) {
-                        const currentTime = webcamPlayerRef.current.currentTime;
-                        screenPlayerRef.current.seekToTime(currentTime);
-                      }
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-
             {/* Anomalies list */}
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 className="text-lg font-medium mb-4">
-                Anomalies 
-                {anomalies.length > 0 && (
-                  <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
-                    {anomalies.length}
-                  </span>
-                )}
+            <div id="anomalies-section" className="bg-white rounded-xl border border-gray-200 p-6">
+              <h2 className="text-lg font-medium mb-4 flex items-center justify-between">
+                <span className="flex items-center">
+                  Anomalies 
+                  {anomalies.length > 0 && (
+                    <span className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
+                      {anomalies.length}
+                    </span>
+                  )}
+                </span>
+                
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={soundEnabled}
+                      onChange={() => setSoundEnabled(prev => !prev)}
+                      className="h-3 w-3"
+                    />
+                    <span className="whitespace-nowrap">Sound Alerts</span>
+                  </label>
+                  
+                  {effectiveStatus === InterviewStatus.Live && (
+                    <span className="flex items-center text-sm text-blue-600">
+                      <Radio className="h-3 w-3 mr-1 animate-pulse" />
+                      Real-time monitoring
+                      {newAnomaliesCount > 0 && (
+                        <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-800 text-xs rounded-full animate-pulse">
+                          +{newAnomaliesCount} new
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
               </h2>
+              
               {anomalies.length === 0 ? (
                 <p className="text-gray-500">
-                  {interview?.status === InterviewStatus.Live 
+                  {effectiveStatus === InterviewStatus.Live 
                     ? "No anomalies detected yet. Monitoring in real-time." 
                     : "No anomalies detected during this interview."}
                 </p>
@@ -886,17 +886,32 @@ function InterviewDetails() {
                   {anomalies.map((a, i) => (
                     <div
                       key={a.id || i}
-                      className="flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer"
+                      className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
+                        a.id && newAnomalyIds.has(a.id) ? 'bg-yellow-50 border-l-2 border-yellow-500' : ''
+                      }`}
                       onClick={() => {
                         setCurrentTime(a.time);
                         setVideoTime(a.time);
+                        
+                        // Remove from new anomalies when clicked
+                        if (a.id && newAnomalyIds.has(a.id)) {
+                          const updatedNewIds = new Set(newAnomalyIds);
+                          updatedNewIds.delete(a.id);
+                          setNewAnomalyIds(updatedNewIds);
+                        }
                       }}
                     >
                       <AlertTriangle className={`h-4 w-4 ${
+                        a.id && newAnomalyIds.has(a.id) ? 'text-red-500 animate-pulse' :
                         a.severity === 'high' ? 'text-red-500' : 
                         a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
                       }`} />
-                      <span className="font-medium">{a.type}</span>
+                      <span className="font-medium">
+                        {a.type}
+                        {a.id && newAnomalyIds.has(a.id) && (
+                          <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
+                        )}
+                      </span>
                       <span className="text-gray-400">
                         at {formatTime(a.time)}
                       </span>
@@ -930,6 +945,184 @@ function InterviewDetails() {
           </>
         )}
       </main>
+
+      {/* Edit Interview Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Edit Interview</h3>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            {editError && (
+              <div className="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded border border-red-200">
+                {editError}
+              </div>
+            )}
+            
+            {updateSuccess && (
+              <div className="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded border border-green-200 flex items-center">
+                <Check className="h-4 w-4 mr-2" />
+                Interview updated successfully!
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Interviewee Email
+                </label>
+                <input
+                  type="email"
+                  name="intervieweeEmail"
+                  value={editFormData.intervieweeEmail}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  name="startDate"
+                  value={editFormData.startDate}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Time
+                </label>
+                <input
+                  type="time"
+                  name="startTime"
+                  value={editFormData.startTime}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Timezone
+                </label>
+                <select
+                  name="timezone"
+                  value={editFormData.timezone}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  {DEFAULT_TIMEZONES.map((tz: string) => (
+                    <option key={tz} value={tz}>
+                      {tz} ({getTimezoneAbbreviation(tz)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Duration (minutes)
+                </label>
+                <input
+                  type="number"
+                  name="duration"
+                  value={editFormData.duration}
+                  onChange={handleEditInputChange}
+                  min="1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveInterview}
+                className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Delete Interview</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete this interview for <span className="font-medium">{interview.candidate}</span>? 
+              This action cannot be undone and all data including recordings and anomaly reports will be permanently deleted.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteInterview}
+                className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded flex items-center gap-2"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-trash">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    Delete Interview
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

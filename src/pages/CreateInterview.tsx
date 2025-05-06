@@ -6,7 +6,7 @@ import { AlertTriangle, Plus, X } from 'lucide-react';
 import { InterviewStatus } from '../firebase/types';
 
 // Generate timezone options
-const DEFAULT_TIMEZONES: string[] = [
+export const DEFAULT_TIMEZONES: string[] = [
   'America/New_York', // EST/EDT
   'America/Chicago',  // CST/CDT
   'America/Denver',   // MST/MDT

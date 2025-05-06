@@ -5,10 +5,10 @@
 /**
  * Creates a MediaSource object and sets up the source buffers for merging video chunks
  * @param videoElement - The HTML video element to attach the media source to
- * @param mimeType - The MIME type of the video, usually 'video/webm; codecs="vp8,opus"'
+ * @param mimeType - The MIME type of the video, usually 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
  * @returns An object with functions to append buffer and end the stream
  */
-export function createMediaSource(videoElement: HTMLVideoElement, mimeType: string = 'video/webm; codecs="vp8,opus"') {
+export function createMediaSource(videoElement: HTMLVideoElement, mimeType: string = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"') {
   // Create a MediaSource instance
   const mediaSource = new MediaSource();
   const sourceURL = URL.createObjectURL(mediaSource);
@@ -202,31 +202,31 @@ export async function fetchVideoChunk(url: string, onProgress?: (progress: numbe
  * @returns The MIME type string to use with MediaSource
  */
 export function detectVideoMimeType(videoUrl: string): string {
-  // Default to WebM with VP8 video and Opus audio codecs
-  const defaultMimeType = 'video/webm; codecs="vp8,opus"';
+  // Default to MP4 with H.264 video and AAC audio codecs
+  const defaultMimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
   
   // Try to detect from URL
   if (!videoUrl) return defaultMimeType;
   
   const url = videoUrl.toLowerCase();
   
-  if (url.endsWith('.webm')) {
-    return 'video/webm; codecs="vp8,opus"';
-  } else if (url.endsWith('.mp4')) {
+  if (url.endsWith('.mp4')) {
     return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  } else if (url.endsWith('.webm')) {
+    return 'video/webm; codecs="vp8,opus"';
   } else if (url.endsWith('.ogg') || url.endsWith('.ogv')) {
     return 'video/ogg; codecs="theora,vorbis"';
-  } else if (url.includes('webm')) {
-    return 'video/webm; codecs="vp8,opus"';
   } else if (url.includes('mp4')) {
     return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  } else if (url.includes('webm')) {
+    return 'video/webm; codecs="vp8,opus"';
   }
   
   // Check if the browser supports various MIME types
-  if (MediaSource.isTypeSupported('video/webm; codecs="vp8,opus"')) {
-    return 'video/webm; codecs="vp8,opus"';
-  } else if (MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')) {
+  if (MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')) {
     return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  } else if (MediaSource.isTypeSupported('video/webm; codecs="vp8,opus"')) {
+    return 'video/webm; codecs="vp8,opus"';
   }
   
   return defaultMimeType;
@@ -248,25 +248,20 @@ export async function mergeVideoChunks(
     throw new Error('No video chunks provided');
   }
   
-  // Set a more reasonable global timeout (30 seconds)
-  const GLOBAL_TIMEOUT = 30000;
-  // Set a timeout per chunk (5 seconds)
-  const CHUNK_TIMEOUT = 5000;
+  // Set a more reasonable global timeout (60 seconds)
+  const GLOBAL_TIMEOUT = 60000;
   
   return new Promise((resolve, reject) => {
-    let isCancelled = false;
     let globalTimeoutId: NodeJS.Timeout | null = null;
     
     console.log(`Starting to merge ${chunkUrls.length} video chunks`);
     
-    // Simplified approach: just use the first chunk instead of merging
-    // This is a fallback that will definitely work, though it won't show the full video
+    // Simplified approach used as a fallback
     const useFallbackApproach = () => {
       console.log('Using fallback approach: playing only first chunk');
       if (chunkUrls.length > 0) {
         videoElement.src = chunkUrls[0];
         
-        // Setup listeners for the video element
         const handleCanPlay = () => {
           console.log('First chunk loaded successfully');
           if (onProgress) onProgress(100);
@@ -290,7 +285,6 @@ export async function mergeVideoChunks(
     // Setup global timeout to prevent hanging
     globalTimeoutId = setTimeout(() => {
       console.warn(`Merging timed out after ${GLOBAL_TIMEOUT}ms, using fallback approach`);
-      isCancelled = true;
       useFallbackApproach();
     }, GLOBAL_TIMEOUT);
     
@@ -304,31 +298,20 @@ export async function mergeVideoChunks(
         return;
       }
       
-      // Create a simple MediaSource that just plays the first chunk
-      // This is more reliable than trying to merge all chunks
       const mediaSource = new MediaSource();
       const sourceUrl = URL.createObjectURL(mediaSource);
       videoElement.src = sourceUrl;
       
       mediaSource.addEventListener('sourceopen', async () => {
-        console.log('MediaSource opened, fetching first chunk');
+        console.log('MediaSource opened, starting to append chunks');
         try {
-          if (onProgress) onProgress(10);
+          if (onProgress) onProgress(5);
           
-          // Get the first chunk only
+          // Determine MIME type based on the first chunk
           const firstChunkUrl = chunkUrls[0];
-          const response = await fetch(firstChunkUrl);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch chunk: ${response.status} ${response.statusText}`);
-          }
-          
-          if (onProgress) onProgress(50);
-          const buffer = await response.arrayBuffer();
-          
-          // Try to determine MIME type
-          let mimeType = 'video/webm; codecs="vp8,opus"';
-          if (firstChunkUrl.includes('.mp4')) {
-            mimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+          let mimeType = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+          if (firstChunkUrl.includes('.webm')) {
+            mimeType = 'video/webm; codecs="vp8,opus"';
           }
           
           // Check if type is supported
@@ -340,29 +323,44 @@ export async function mergeVideoChunks(
           console.log(`Using MIME type: ${mimeType}`);
           const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
           
-          // Set up a timeout for the append operation
-          const appendTimeout = setTimeout(() => {
-            console.warn(`Append operation timed out after ${CHUNK_TIMEOUT}ms`);
-            if (mediaSource.readyState === 'open') {
-              try {
-                mediaSource.endOfStream();
-              } catch (e) {
-                console.error('Error ending stream after timeout:', e);
-              }
-            }
-          }, CHUNK_TIMEOUT);
+          // Flag to track if we're in the middle of a buffer append operation
+          let isAppending = false;
           
-          // Handle successful append
-          sourceBuffer.addEventListener('updateend', () => {
-            clearTimeout(appendTimeout);
-            console.log('First chunk appended successfully');
+          // Create a queue of chunks to append
+          const chunkQueue: ArrayBuffer[] = [];
+          
+          // Process the next chunk in the queue
+          const processNextChunk = async () => {
+            if (isAppending || chunkQueue.length === 0) {
+              return;
+            }
             
-            // End the stream since we're only adding one chunk
-            if (mediaSource.readyState === 'open') {
+            isAppending = true;
+            try {
+              const chunk = chunkQueue.shift();
+              if (chunk) {
+                sourceBuffer.appendBuffer(chunk);
+              }
+            } catch (e) {
+              console.error('Error appending buffer:', e);
+              isAppending = false;
+              processNextChunk();
+            }
+          };
+          
+          // Handle buffer update end events
+          sourceBuffer.addEventListener('updateend', () => {
+            isAppending = false;
+            
+            // Process the next chunk if available
+            if (chunkQueue.length > 0) {
+              processNextChunk();
+            } 
+            // End the stream when we're done with all chunks
+            else if (mediaSource.readyState === 'open' && chunksLoaded === chunkUrls.length) {
               try {
                 mediaSource.endOfStream();
-                if (onProgress) onProgress(100);
-                console.log('MediaSource stream ended successfully');
+                console.log('All chunks appended, ended MediaSource stream');
                 
                 // Clear the global timeout since we succeeded
                 if (globalTimeoutId) {
@@ -370,25 +368,51 @@ export async function mergeVideoChunks(
                   globalTimeoutId = null;
                 }
                 
+                if (onProgress) onProgress(100);
                 resolve();
               } catch (e) {
                 console.error('Error ending stream:', e);
                 useFallbackApproach();
               }
             }
-          }, { once: true });
+          });
           
-          // Handle append error
-          sourceBuffer.addEventListener('error', (e) => {
-            clearTimeout(appendTimeout);
-            console.error('Error appending buffer:', e);
-            useFallbackApproach();
-          }, { once: true });
+          // Track how many chunks have been loaded and processed
+          let chunksLoaded = 0;
           
-          // Append the buffer
-          if (onProgress) onProgress(60);
-          sourceBuffer.appendBuffer(buffer);
-          console.log('Appending first chunk to MediaSource');
+          // Fetch each chunk and add it to the queue
+          for (let i = 0; i < chunkUrls.length; i++) {
+            try {
+              // Update progress based on which chunk we're loading
+              const chunkProgress = 5 + ((i / chunkUrls.length) * 90);
+              if (onProgress) onProgress(Math.round(chunkProgress));
+              
+              console.log(`Fetching chunk ${i + 1}/${chunkUrls.length}: ${chunkUrls[i]}`);
+              const response = await fetch(chunkUrls[i]);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch chunk ${i + 1}: ${response.status} ${response.statusText}`);
+              }
+              
+              const buffer = await response.arrayBuffer();
+              console.log(`Chunk ${i + 1} fetched, size: ${buffer.byteLength} bytes`);
+              
+              // Add to queue and start processing if this is the first chunk
+              chunkQueue.push(buffer);
+              chunksLoaded++;
+              
+              if (!isAppending) {
+                processNextChunk();
+              }
+            } catch (error) {
+              console.error(`Error fetching chunk ${i + 1}:`, error);
+              // Continue with other chunks even if one fails
+            }
+          }
+          
+          // If no chunks were loaded successfully, use the fallback
+          if (chunksLoaded === 0) {
+            throw new Error('Failed to load any chunks');
+          }
           
         } catch (error) {
           console.error('Error in sourceopen handler:', error);
