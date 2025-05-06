@@ -74,12 +74,30 @@ function App() {
                   </PrivateRoute>
                 }
               />
+              {/* Catch-all route to redirect to login if unauthenticated or dashboard if authenticated */}
+              <Route 
+                path="*" 
+                element={
+                  <AuthRedirect />
+                } 
+              />
             </Routes>
           </div>
         </div>
       </AuthProvider>
     </Router>
   )
+}
+
+// Component to handle redirects based on authentication status
+function AuthRedirect() {
+  const { user, loading } = useAuth()
+  
+  if (loading) {
+    return <div>Loading...</div>
+  }
+  
+  return user ? <Navigate to="/" /> : <Navigate to="/login" />
 }
 
 export default App
