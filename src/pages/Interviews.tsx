@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ChevronDown, Eye, AlertTriangle, Ban, CheckCircle, ChevronUp, ChevronDown as ChevronDownIcon, Clock, Radio } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import interviewService from '../firebase/services'
 import type { Interview } from '../firebase/types'
 import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types'
@@ -72,9 +72,24 @@ function Interviews() {
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [searchTerm, setSearchTerm] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { user } = useAuth()
   
+  // Initialize status filter from URL parameter
+  const initialStatus = searchParams.get('status') as InterviewStatus | null
+  const [statusFilter, setStatusFilter] = useState<InterviewStatus | 'all'>(initialStatus || 'all')
+
+  // Update URL when status filter changes
+  useEffect(() => {
+    if (statusFilter === 'all') {
+      searchParams.delete('status')
+    } else {
+      searchParams.set('status', statusFilter)
+    }
+    setSearchParams(searchParams)
+  }, [statusFilter, searchParams, setSearchParams])
+
   useEffect(() => {
     const fetchInterviews = async () => {
       try {
@@ -164,10 +179,14 @@ function Interviews() {
   const filteredAndSortedInterviews = interviews
     .filter(interview => {
       const searchLower = searchTerm.toLowerCase()
-      return (
+      const matchesSearch = 
         interview.candidate.toLowerCase().includes(searchLower) ||
-        interview.position.toLowerCase().includes(searchLower)
-      )
+        interview.position.toLowerCase().includes(searchLower) ||
+        interview.intervieweeEmail?.toLowerCase().includes(searchLower)
+      
+      const matchesStatus = statusFilter === 'all' || getEffectiveInterviewStatus(interview) === statusFilter
+      
+      return matchesSearch && matchesStatus
     })
     .sort((a, b) => {
       // First, sort by completion status
@@ -222,7 +241,9 @@ function Interviews() {
     <div className="flex-1 overflow-auto">
       <header className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-gray-900">Interviews</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {statusFilter !== 'all' ? `${getStatusProps({ status: statusFilter } as Interview).label} Interviews` : 'Interviews'}
+          </h1>
           <div className="flex items-center gap-4">
             <input
               type="text"
@@ -231,6 +252,21 @@ function Interviews() {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as InterviewStatus | 'all')}
+                className="appearance-none bg-white border border-gray-300 rounded-md pl-3 pr-10 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">All Statuses</option>
+                <option value={InterviewStatus.NotCompleted}>Not Completed</option>
+                <option value={InterviewStatus.Live}>Live Now</option>
+                <option value={InterviewStatus.Completed}>Completed</option>
+                <option value={InterviewStatus.SuspiciousActivity}>Suspicious Activity</option>
+                <option value={InterviewStatus.Cheating}>Cheating</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
+            </div>
             <div className="relative">
               <select
                 value={timeframe}
@@ -258,6 +294,9 @@ function Interviews() {
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Candidate
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Email
                   </th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Position
@@ -294,6 +333,11 @@ function Interviews() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
                           {interview.candidate}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {interview.intervieweeEmail}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

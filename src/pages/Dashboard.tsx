@@ -173,8 +173,8 @@ function Dashboard() {
     }))
   }
 
-  const handleCardClick = (status: InterviewStatus | 'all') => {
-    navigate('/interviews', { state: { filter: status } })
+  const handleCardClick = (filter: string) => {
+    navigate(`/interviews${filter ? `?status=${filter}` : ''}`)
   }
 
   if (loading) {
@@ -195,143 +195,112 @@ function Dashboard() {
 
   return (
     <div className="flex-1 overflow-auto p-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">
-          Welcome back, {user?.email}
-        </h1>
-        <p className="text-gray-500">Here's your interview monitoring dashboard</p>
+      <header className="bg-white border-b border-gray-200 px-8 py-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center space-x-2 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setTimePeriod('day')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  timePeriod === 'day'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Day
+              </button>
+              <button
+                onClick={() => setTimePeriod('week')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  timePeriod === 'week'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Week
+              </button>
+              <button
+                onClick={() => setTimePeriod('all')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  timePeriod === 'all'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                All
+              </button>
+            </div>
+          </div>
+        </div>
       </header>
 
-      <div className="flex justify-end mb-6">
-        <div className="inline-flex rounded-lg border border-gray-200 p-1">
-          <button
-            onClick={() => setTimePeriod('day')}
-            className={`px-4 py-2 rounded-md ${
-              timePeriod === 'day'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
+      <main className="p-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div
+            onClick={() => handleCardClick(InterviewStatus.Completed)}
+            className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
           >
-            Day
-          </button>
-          <button
-            onClick={() => setTimePeriod('week')}
-            className={`px-4 py-2 rounded-md ${
-              timePeriod === 'week'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Completed Interviews</h3>
+              <CheckCircle className="h-6 w-6 text-green-500" />
+            </div>
+            <p className="text-3xl font-bold text-green-600">{stats.completedInterviews}</p>
+          </div>
+          <div
+            onClick={() => handleCardClick(InterviewStatus.SuspiciousActivity)}
+            className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
           >
-            Week
-          </button>
-          <button
-            onClick={() => setTimePeriod('all')}
-            className={`px-4 py-2 rounded-md ${
-              timePeriod === 'all'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Suspicious Activity</h3>
+              <AlertTriangle className="h-6 w-6 text-yellow-500" />
+            </div>
+            <p className="text-3xl font-bold text-yellow-600">{stats.suspiciousInterviews}</p>
+          </div>
+          <div
+            onClick={() => handleCardClick(InterviewStatus.Cheating)}
+            className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
           >
-            All
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div 
-          className="bg-white rounded-xl border border-gray-200 p-6 cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => handleCardClick('all')}
-        >
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            Total Interviews
-          </h3>
-          <p className="text-3xl font-bold text-gray-900">
-            {stats.totalInterviews}
-          </p>
-        </div>
-
-        <div 
-          className="bg-white rounded-xl border border-gray-200 p-6 cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => handleCardClick(InterviewStatus.NotCompleted)}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-medium text-gray-900">
-              Pending Interviews
-            </h3>
-            <Clock className="h-5 w-5 text-blue-500" />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Cheating Detected</h3>
+              <Ban className="h-6 w-6 text-red-500" />
+            </div>
+            <p className="text-3xl font-bold text-red-600">{stats.cheatingInterviews}</p>
           </div>
-          <p className="text-3xl font-bold text-blue-600">
-            {stats.notCompletedInterviews}
-          </p>
-        </div>
-
-        <div 
-          className="bg-white rounded-xl border border-gray-200 p-6 cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => handleCardClick(InterviewStatus.Completed)}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-medium text-gray-900">
-              Completed Interviews
-            </h3>
-            <CheckCircle className="h-5 w-5 text-green-500" />
+          <div
+            onClick={() => handleCardClick(InterviewStatus.NotCompleted)}
+            className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Not Completed</h3>
+              <Clock className="h-6 w-6 text-gray-500" />
+            </div>
+            <p className="text-3xl font-bold text-gray-600">{stats.notCompletedInterviews}</p>
           </div>
-          <p className="text-3xl font-bold text-green-600">
-            {stats.completedInterviews}
-          </p>
         </div>
 
-        <div 
-          className="bg-white rounded-xl border border-gray-200 p-6 cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => handleCardClick(InterviewStatus.SuspiciousActivity)}
-        >
-          <div className="flex items-center justify-between mb-2">
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900">
-              Suspicious Interviews
+              Suspicious & Cheating Activity {timePeriod === 'day' ? 'Today' : timePeriod === 'week' ? 'This Week' : 'All Time'}
             </h3>
-            <AlertTriangle className="h-5 w-5 text-yellow-500" />
+            <Calendar className="h-5 w-5 text-gray-400" />
           </div>
-          <p className="text-3xl font-bold text-yellow-600">
-            {stats.suspiciousInterviews}
-          </p>
-        </div>
-
-        <div 
-          className="bg-white rounded-xl border border-gray-200 p-6 cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => handleCardClick(InterviewStatus.Cheating)}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-medium text-gray-900">
-              Cheating Interviews
-            </h3>
-            <Ban className="h-5 w-5 text-red-500" />
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.weeklyData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="suspicious" name="Suspicious" fill="#EAB308" />
+                <Bar dataKey="cheating" name="Cheating" fill="#EF4444" />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
-          <p className="text-3xl font-bold text-red-600">
-            {stats.cheatingInterviews}
-          </p>
         </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-gray-900">
-            Suspicious & Cheating Activity {timePeriod === 'day' ? 'Today' : timePeriod === 'week' ? 'This Week' : 'All Time'}
-          </h3>
-          <Calendar className="h-5 w-5 text-gray-400" />
-        </div>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={stats.weeklyData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="suspicious" name="Suspicious" fill="#EAB308" />
-              <Bar dataKey="cheating" name="Cheating" fill="#EF4444" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      </main>
     </div>
   )
 }
