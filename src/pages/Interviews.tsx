@@ -23,6 +23,45 @@ const getTimezoneAbbreviation = (timezone: string): string => {
   }
 };
 
+// Update the calculateEndTime function to use 24-hour format
+const calculateEndTime = (startDate: string, startTime: string, duration: string, timezone: string): { date: string, time: string } => {
+  if (!startDate || !startTime || !duration) return { date: '', time: '' };
+  
+  const [hours, minutes] = startTime.split(':').map(Number);
+  const durationMinutes = parseInt(duration, 10);
+  
+  const endDate = new Date(startDate);
+  endDate.setHours(hours, minutes + durationMinutes, 0);
+  
+  return {
+    date: endDate.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    }),
+    time: endDate.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    })
+  };
+};
+
+// Add helper function to format date and time consistently
+const formatDateTime = (date: string, time: string): { date: string, time: string } => {
+  if (!date || !time) return { date: '', time: '' };
+  
+  const dateObj = new Date(date);
+  return {
+    date: dateObj.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    }),
+    time: time
+  };
+};
+
 function Interviews() {
   const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d'>('7d')
   const [interviews, setInterviews] = useState<Interview[]>([])
@@ -131,24 +170,30 @@ function Interviews() {
       )
     })
     .sort((a, b) => {
-      let comparison = 0
-      switch (sortField) {
-        case 'date':
-          comparison = new Date(a.date).getTime() - new Date(b.date).getTime()
-          break
-        case 'candidate':
-          comparison = a.candidate.localeCompare(b.candidate)
-          break
-        case 'position':
-          comparison = a.position.localeCompare(b.position)
-          break
-        case 'status':
-          const statusA = getStatusProps(a).label
-          const statusB = getStatusProps(b).label
-          comparison = statusA.localeCompare(statusB)
-          break
+      // First, sort by completion status
+      const statusA = getEffectiveInterviewStatus(a);
+      const statusB = getEffectiveInterviewStatus(b);
+      
+      // NotCompleted and Live interviews should come first
+      const isIncompleteA = statusA === InterviewStatus.NotCompleted || statusA === InterviewStatus.Live;
+      const isIncompleteB = statusB === InterviewStatus.NotCompleted || statusB === InterviewStatus.Live;
+      
+      if (isIncompleteA && !isIncompleteB) return -1;
+      if (!isIncompleteA && isIncompleteB) return 1;
+      
+      // If both are incomplete or both are complete, sort by scheduled date/time
+      if (a.startDate && a.startTime && b.startDate && b.startTime) {
+        const dateA = new Date(`${a.startDate}T${a.startTime}`);
+        const dateB = new Date(`${b.startDate}T${b.startTime}`);
+        return dateA.getTime() - dateB.getTime();
       }
-      return sortOrder === 'asc' ? comparison : -comparison
+      
+      // If one has date/time and the other doesn't, put the one with date/time first
+      if (a.startDate && a.startTime) return -1;
+      if (b.startDate && b.startTime) return 1;
+      
+      // If neither has date/time, maintain original order
+      return 0;
     })
 
   // Pagination
@@ -208,58 +253,26 @@ function Interviews() {
             <table className="min-w-full divide-y divide-gray-200 table-auto">
               <thead className="bg-gray-50">
                 <tr>
-                  <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('status')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Status
-                      {sortField === 'status' && (
-                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
-                      )}
-                    </div>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
                   </th>
-                  <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('candidate')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Candidate
-                      {sortField === 'candidate' && (
-                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
-                      )}
-                    </div>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Candidate
                   </th>
-                  <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('position')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Position
-                      {sortField === 'position' && (
-                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
-                      )}
-                    </div>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Position
                   </th>
-                  <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('date')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Date
-                      {sortField === 'date' && (
-                        sortOrder === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDownIcon className="h-4 w-4" />
-                      )}
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Duration
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Scheduled
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    End Time
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Duration (Minutes)
+                  </th>
+                  <th scope="col" className="relative px-6 py-3">
+                    <span className="sr-only">View</span>
                   </th>
                 </tr>
               </thead>
@@ -289,27 +302,56 @@ function Interviews() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {formatDate(interview.date)}
-                        </div>
+                        {interview.startDate && interview.startTime ? (
+                          <div className="text-sm text-gray-900">
+                            {(() => {
+                              const { date, time } = formatDateTime(interview.startDate, interview.startTime);
+                              return (
+                                <>
+                                  {date} at {time}
+                                  {interview.timezone && (
+                                    <div className="text-xs text-gray-500">
+                                      {interview.timezone} ({getTimezoneAbbreviation(interview.timezone)})
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400">-</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {interview.startDate && interview.startTime && interview.duration ? (
+                          <div className="text-sm text-gray-900">
+                            {(() => {
+                              const { date, time } = calculateEndTime(
+                                interview.startDate,
+                                interview.startTime,
+                                interview.duration,
+                                interview.timezone || ''
+                              );
+                              return (
+                                <>
+                                  {date} at {time}
+                                  {interview.timezone && (
+                                    <div className="text-xs text-gray-500">
+                                      {interview.timezone} ({getTimezoneAbbreviation(interview.timezone)})
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400">-</div>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">
                           {interview.duration}
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {interview.startDate && interview.startTime ? (
-                          <div className="text-sm text-gray-900">
-                            {interview.startDate} at {interview.startTime}
-                            <div className="text-xs text-gray-500">
-                              {interview.timezone} 
-                              {interview.timezone && ` (${getTimezoneAbbreviation(interview.timezone)})`}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-400">-</div>
-                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button
