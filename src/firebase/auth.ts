@@ -3,7 +3,8 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  User
+  User,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from './config';
 
@@ -32,6 +33,15 @@ export const authService = {
   signOut: async () => {
     try {
       await signOut(auth);
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  // Reset password
+  resetPassword: async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
     } catch (error) {
       throw error;
     }

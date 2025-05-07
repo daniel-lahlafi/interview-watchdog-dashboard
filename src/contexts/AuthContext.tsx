@@ -8,6 +8,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (email: string, password: string) => Promise<User>;
   signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn: authService.signIn,
     signUp: authService.signUp,
     signOut: authService.signOut,
+    resetPassword: authService.resetPassword,
   };
 
   return (
