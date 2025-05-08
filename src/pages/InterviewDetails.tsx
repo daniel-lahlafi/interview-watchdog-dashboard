@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { InterviewStatus, getEffectiveInterviewStatus, isInterviewLive } from '../firebase/types'
 import SequentialVideoPlayer from '../components/SequentialVideoPlayer'
 import { DEFAULT_TIMEZONES } from './CreateInterview'
+import { DateTime } from 'luxon'
 
 // Helper function to get timezone abbreviation
 const getTimezoneAbbreviation = (timezone: string): string => {
@@ -71,6 +72,8 @@ function InterviewDetails() {
   // Add state variables for the copy animation
   const [accessCodeCopied, setAccessCodeCopied] = useState(false);
   const [accessCodeCopied2, setAccessCodeCopied2] = useState(false); // For the second button in not completed view
+  const [emailCopied, setEmailCopied] = useState(false); // For the email copy animation
+  const [emailCopied2, setEmailCopied2] = useState(false); // For the second email copy button in not completed view
   
   // Refs
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -234,11 +237,11 @@ function InterviewDetails() {
     const effectiveStatus = getEffectiveInterviewStatus(interview);
     const isLive = effectiveStatus === InterviewStatus.Live;
     
-    console.log(`Setting up anomaly detection for interview ${id}, status: ${interview.status}, effective status: ${effectiveStatus}, isLive: ${isLive}`);
+    console.log(`Setting up real-time anomaly detection for interview ${id}, status: ${interview.status}, effective status: ${effectiveStatus}, isLive: ${isLive}`);
     
-    // Callback function to handle anomaly updates
-    const handleAnomalyUpdate = (updatedAnomalies: Anomaly[]) => {
-      console.log(`Received ${updatedAnomalies.length} anomalies`);
+    // Set up real-time listener for anomalies
+    const unsubscribe = interviewService.getAnomalies(id, isLive, (updatedAnomalies: Anomaly[]) => {
+      console.log(`Received ${updatedAnomalies.length} anomalies in real-time update`);
       
       // Check if there are any new anomalies
       if (updatedAnomalies.length > anomalies.length) {
@@ -343,10 +346,7 @@ function InterviewDetails() {
       
       // Update anomalies state with the reverse-sorted array
       setAnomalies(sortedAnomalies);
-    };
-    
-    // Set up anomaly detection listener
-    const unsubscribe = interviewService.getAnomalies(id, isLive, handleAnomalyUpdate);
+    });
     
     // Clean up listener when component unmounts or interview changes
     return () => {
@@ -603,13 +603,34 @@ function InterviewDetails() {
                 
                 {/* Copied animation */}
                 {accessCodeCopied && (
-                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100">
+                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100 -translate-y-full -mt-1 z-10">
                     Copied!
                   </div>
                 )}
               </div>
-              <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md ml-2">
+              <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md ml-2 relative inline-flex items-center">
                 <span className="font-medium">Email:</span> {interview.intervieweeEmail}
+                <button 
+                  className="ml-2 text-blue-600 hover:text-blue-800"
+                  onClick={() => {
+                    navigator.clipboard.writeText(interview.intervieweeEmail);
+                    setEmailCopied(true);
+                    setTimeout(() => setEmailCopied(false), 1500);
+                  }}
+                  title="Copy email"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-copy">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                  </svg>
+                </button>
+                
+                {/* Copied animation */}
+                {emailCopied && (
+                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100 whitespace-nowrap -translate-y-full -mt-1 z-10">
+                    Copied!
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -654,7 +675,7 @@ function InterviewDetails() {
                 This interview is currently live
               </p>
               <p className="text-blue-600 text-xs">
-                Started at {interview.startTime} ({interview.timezone}) and runs for {interview.duration} minutes
+                Started at {interview.startTime} ({interview.timezone}) and runs for {interview.duration} minutes until {interview.startTime ? DateTime.fromFormat(interview.startTime, 'HH:mm', { zone: interview.timezone }).plus({ minutes: parseInt(interview.duration) }).toFormat('HH:mm') : 'N/A'} ({interview.timezone})
               </p>
             </div>
           </div>
@@ -687,13 +708,36 @@ function InterviewDetails() {
                     
                     {/* Copied animation */}
                     {accessCodeCopied2 && (
-                      <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100">
+                      <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100 -translate-y-full -mt-1 z-10">
                         Copied!
                       </div>
                     )}
                   </div>
-                  <div className="text-sm">
-                    <span className="font-medium">Email:</span> {interview.intervieweeEmail}
+                  <div className="text-sm relative inline-flex items-center">
+                    <span className="font-medium">Email:</span>
+                    <span className="mx-2 font-mono bg-gray-100 px-2 py-1 rounded">{interview.intervieweeEmail}</span>
+
+                    <button 
+                      className="ml-2 text-blue-600 hover:text-blue-800"
+                      onClick={() => {
+                        navigator.clipboard.writeText(interview.intervieweeEmail);
+                        setEmailCopied2(true);
+                        setTimeout(() => setEmailCopied2(false), 1500);
+                      }}
+                      title="Copy email"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-copy">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                      </svg>
+                    </button>
+                    
+                    {/* Copied animation */}
+                    {emailCopied2 && (
+                      <div className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-xs rounded shadow-lg transition-opacity duration-1500 opacity-100 whitespace-nowrap -translate-y-full -mt-1 z-10">
+                        Copied!
+                      </div>
+                    )}
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-3">
@@ -702,7 +746,7 @@ function InterviewDetails() {
               </div>
               
               {/* Display scheduling information if available */}
-              {interview.startDate && interview.startTime && (
+              {!isInterviewLive(interview) && interview.startDate && interview.startTime && (
                 <div className="mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg">
                   <h3 className="font-medium text-blue-800">Scheduled Interview</h3>
                   <p className="text-blue-600">

@@ -1,3 +1,5 @@
+import { DateTime } from "luxon";
+
 export enum InterviewStatus {
   NotCompleted = 'Not Completed',
   SuspiciousActivity = 'Suspicious Activity',
@@ -57,7 +59,7 @@ export function isInterviewLive(interview: Interview): boolean {
     // Parse the scheduled start time
     const [startHours, startMinutes] = interview.startTime.split(':').map(Number);
     
-    // Create a Date object for the scheduled start time
+    // Create a Date object for the scheduled start time in the interview's timezone
     const scheduledStartDate = new Date(interview.startDate);
     scheduledStartDate.setHours(startHours, startMinutes, 0, 0);
     
@@ -66,16 +68,28 @@ export function isInterviewLive(interview: Interview): boolean {
       scheduledStartDate.toLocaleString('en-US', { timeZone: interview.timezone })
     );
     
-    // Calculate the end time based on duration (in minutes)
-    const durationMinutes = parseInt(interview.duration, 10);
-    const scheduledEndInTimezone = new Date(scheduledStartInTimezone);
-    scheduledEndInTimezone.setMinutes(scheduledEndInTimezone.getMinutes() + durationMinutes);
+
     
+    const startDateTime = DateTime.fromISO("2025-05-07T22:19", {
+      zone: interview.timezone,
+    });
+
+    const endDateTime = startDateTime.plus({ minutes: Number(interview.duration) });
+
+    const currentTime = DateTime.now().setZone(interview.timezone);
+
     // Check if current time is between start and end times
-    return (
-      currentTimeInInterviewTimezone >= scheduledStartInTimezone &&
-      currentTimeInInterviewTimezone <= scheduledEndInTimezone
-    );
+    const isLive = currentTime >= startDateTime && currentTime <= endDateTime;
+    
+    console.log('Interview live status check:', {
+      interviewId: interview.id,
+      currentTime: currentTime.toISO(),
+      startTime: startDateTime.toISO(),
+      endTime: endDateTime.toISO(),
+      isLive
+    });
+    
+    return isLive;
   } catch (error) {
     console.error('Error determining if interview is live:', error);
     return false;
