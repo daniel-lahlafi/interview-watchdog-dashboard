@@ -187,7 +187,6 @@ export default function CreateInterview() {
         interviewerId: user.uid,
         candidate: formData.candidate,
         position: formData.position,
-        date: formData.startDate, // Use start date as the date field
         startDate: formData.startDate,
         startTime: formData.startTime,
         timezone: formData.timezone,

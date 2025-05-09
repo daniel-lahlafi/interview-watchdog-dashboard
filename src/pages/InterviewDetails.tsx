@@ -2,14 +2,18 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio, Edit, X, Check } from 'lucide-react'
+import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio, Edit, X, Check, Clock } from 'lucide-react'
 import interviewService from '../firebase/services'
 import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
-import { InterviewStatus, getEffectiveInterviewStatus, isInterviewLive } from '../firebase/types'
-import SequentialVideoPlayer from '../components/SequentialVideoPlayer'
+import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types'
+import { isInterviewLive } from '../utils/statusChecks'
+import { SynchronizedVideos } from '../components/SynchronizedVideos'
+import { SynchronizedStreams } from '../components/SynchronizedStreams'
 import { DEFAULT_TIMEZONES } from './CreateInterview'
 import { DateTime } from 'luxon'
+import { doc, onSnapshot, query, collection, where } from 'firebase/firestore'
+import { db } from '../firebase/config'
 
 // Helper function to get timezone abbreviation
 const getTimezoneAbbreviation = (timezone: string): string => {
@@ -98,6 +102,9 @@ function InterviewDetails() {
   const [editError, setEditError] = useState<string | null>(null);
   const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
 
+  // Add this with other state declarations at the top of the component
+  const [selectedAnomalyTime, setSelectedAnomalyTime] = useState<string | undefined>(undefined);
+
   const handleDurationChange = useCallback((duration: number) => {
     console.log(`Total video duration updated: ${duration.toFixed(2)}s`)
     setTotalVideoDuration(duration)
@@ -141,56 +148,6 @@ function InterviewDetails() {
           console.log(`Fetching interview data for ID: ${id}`)
           const interviewData = await interviewService.getInterviewById(id)
           setInterview(interviewData)
-          
-          // Check if the interview has recordings available (completed OR live)
-          if (interviewData && (interviewData.status !== InterviewStatus.NotCompleted || isInterviewLive(interviewData))) {
-            setLoadingVideo(true)
-            console.log('Interview has recordings, loading videos')
-            
-            try {
-              // Fetch all chunks for both videos
-              const screenPromise = interviewService.getMergedScreenRecording(interviewData.id)
-                .catch(e => {
-                  console.error('Failed to fetch screen recording:', e)
-                  return [] as string[]
-                })
-                
-              const webcamPromise = interviewService.getMergedWebcamRecording(interviewData.id)
-                .catch(e => {
-                  console.error('Failed to fetch webcam recording:', e)
-                  return [] as string[]
-                })
-              
-              const [screenUrls, webcamUrls] = await Promise.all([screenPromise, webcamPromise])
-              
-              console.log('Videos fetched:', { 
-                screenUrls: screenUrls.length > 0 ? screenUrls.length : 0, 
-                webcamUrls: webcamUrls.length > 0 ? webcamUrls.length : 0 
-              })
-              
-              if (screenUrls.length === 0 && webcamUrls.length === 0) {
-                setVideoError('Could not load any video recordings. Try refreshing the page.')
-              } else {
-                if (screenUrls.length === 0) {
-                  setVideoError('Screen recording could not be loaded.')
-                } else if (webcamUrls.length === 0) {
-                  setVideoError('Webcam recording could not be loaded.')
-                }
-                
-                setScreenVideoUrls(screenUrls)
-                setWebcamVideoUrls(webcamUrls)
-              }
-            } catch (videoErr) {
-              console.error('Error loading videos:', videoErr)
-              setVideoError('Failed to load video recordings. Please try refreshing.')
-            } finally {
-              setLoadingVideo(false)
-              if (loadingTimeoutRef.current) {
-                clearTimeout(loadingTimeoutRef.current)
-                loadingTimeoutRef.current = null
-              }
-            }
-          }
         }
         
         console.log(`Fetching interviews for user ID: ${user?.uid}`)
@@ -225,31 +182,40 @@ function InterviewDetails() {
 
   // New effect for anomaly detection
   useEffect(() => {
-    // Skip if no interview loaded yet
     if (!interview || !id) return;
-    
-    // Initialize anomalies from the interview if available
-    if (interview.anomalies && interview.anomalies.length > 0) {
-      setAnomalies(interview.anomalies);
-    }
     
     // Get the effective status to determine if interview is live
     const effectiveStatus = getEffectiveInterviewStatus(interview);
     const isLive = effectiveStatus === InterviewStatus.Live;
     
-    console.log(`Setting up real-time anomaly detection for interview ${id}, status: ${interview.status}, effective status: ${effectiveStatus}, isLive: ${isLive}`);
+    if (!isLive) return; // Only set up real-time listener for live interviews
     
-    // Set up real-time listener for anomalies
-    const unsubscribe = interviewService.getAnomalies(id, isLive, (updatedAnomalies: Anomaly[]) => {
-      console.log(`Received ${updatedAnomalies.length} anomalies in real-time update`);
+    console.log(`Setting up real-time anomaly detection for interview ${id}`);
+    
+    // Set up real-time listener for anomalies directly using Firebase
+    const q = query(collection(db, 'cheating'), where("interviewId", "==", id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const updatedAnomalies: Anomaly[] = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          time: data.timestamp || 0,
+          type: data.type || 'Unknown',
+          description: data.description || '',
+          severity: data.severity || 'medium',
+          metadata: data
+        } as Anomaly;
+      });
+      
+      // Sort anomalies in reverse chronological order (newest first)
+      updatedAnomalies.sort((a, b) => b.time - a.time);
       
       // Check if there are any new anomalies
       if (updatedAnomalies.length > anomalies.length) {
-        // Calculate how many new anomalies were added
         const newCount = updatedAnomalies.length - anomalies.length;
         setNewAnomaliesCount(prev => prev + newCount);
         
-        // Track which anomalies are new (by their ID)
+        // Track which anomalies are new
         const newIds = new Set(newAnomalyIds);
         updatedAnomalies.slice(-newCount).forEach(anomaly => {
           if (anomaly.id) {
@@ -257,102 +223,40 @@ function InterviewDetails() {
           }
         });
         setNewAnomalyIds(newIds);
-        
-        // Show notification for new anomalies
         setNewAnomalyAlert(true);
         
-        // Try to play alert sound if the interview is live and sound is enabled
-        if (effectiveStatus === InterviewStatus.Live && soundEnabled) {
+        // Play sound if enabled
+        if (soundEnabled) {
           try {
-            // Check if we can find an existing sound file, or use a Web API approach
-            const soundOptions = [
-              '/notification-sound.mp3',
-              '/notification-sound.wav',
-              '/assets/notification-sound.mp3',
-              '/sounds/notification.mp3',
-              '/alert.mp3'
-            ];
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
             
-            // Try to create and play a simple beep using the Web Audio API
-            // This is a fallback if no sound files are available
-            const playBeep = () => {
-              try {
-                const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                const oscillator = audioContext.createOscillator();
-                const gainNode = audioContext.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                
-                oscillator.type = 'sine';
-                oscillator.frequency.value = 800; // Value in hertz
-                gainNode.gain.value = 0.1;
-                
-                oscillator.start(0);
-                oscillator.stop(audioContext.currentTime + 0.2);
-                console.log('Played alert beep using Web Audio API');
-                return true;
-              } catch (audioError) {
-                console.log('Could not create beep sound:', audioError);
-                return false;
-              }
-            };
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
             
-            // Try each sound file until one works
-            const tryPlaySound = async () => {
-              // First try audio files
-              for (const soundPath of soundOptions) {
-                try {
-                  const audio = new Audio(soundPath);
-                  // Add a timeout to avoid hanging on load
-                  const playPromise = audio.play();
-                  
-                  if (playPromise !== undefined) {
-                    const playSuccess = await Promise.race([
-                      playPromise.then(() => true).catch(() => false),
-                      new Promise(resolve => setTimeout(() => resolve(false), 1000))
-                    ]);
-                    
-                    if (playSuccess) {
-                      console.log(`Successfully played notification sound: ${soundPath}`);
-                      return true;
-                    }
-                  }
-                } catch (e) {
-                  console.log(`Could not play sound file ${soundPath}:`, e);
-                }
-              }
-              
-              // If no audio files worked, try the beep
-              return playBeep();
-            };
+            oscillator.type = 'sine';
+            oscillator.frequency.value = 800;
+            gainNode.gain.value = 0.1;
             
-            // Try to play the sound but don't wait for it
-            tryPlaySound().catch(e => console.log('Sound playback completely failed:', e));
+            oscillator.start(0);
+            oscillator.stop(audioContext.currentTime + 0.2);
           } catch (error) {
-            console.log('Error handling notification sound', error);
-            // Non-critical error, so we just log it and continue
+            console.log('Error playing alert sound:', error);
           }
         }
         
-        // Hide the notification after a few seconds
-        setTimeout(() => {
-          setNewAnomalyAlert(false);
-        }, 8000); // Longer timeout for better visibility
+        // Hide notification after delay
+        setTimeout(() => setNewAnomalyAlert(false), 8000);
       }
       
-      // Sort anomalies in reverse chronological order (newest first)
-      const sortedAnomalies = [...updatedAnomalies].sort((a, b) => b.time - a.time);
-      
-      // Update anomalies state with the reverse-sorted array
-      setAnomalies(sortedAnomalies);
+      setAnomalies(updatedAnomalies);
+    }, (error) => {
+      console.error('Error in real-time anomaly listener:', error);
     });
     
-    // Clean up listener when component unmounts or interview changes
-    return () => {
-      unsubscribe();
-    };
-  }, [id, interview, anomalies.length, soundEnabled]);
+    return () => unsubscribe();
+  }, [id, interview?.status]); // Only re-run when interview ID or status changes
 
   // Event handlers
   const refreshPage = () => {
@@ -364,26 +268,25 @@ function InterviewDetails() {
     if (!interview) return {
       candidate: '',
       position: '',
-      date: '',
+      startDate: '',
       duration: '',
     };
     
     const {
       candidate,
       position,
-      date,
+      startDate,
       duration,
     } = interview;
     
-    return { candidate, position, date, duration };
+    return { candidate, position, startDate, duration };
   };
 
   // Extract values from interview
-  const { candidate, position, date, duration } = getInterviewDetails();
+  const { candidate, position, startDate, duration } = getInterviewDetails();
 
   // Add a live badge at the top of the page if it's currently live
   const effectiveStatus = interview ? getEffectiveInterviewStatus(interview) : InterviewStatus.NotCompleted;
-
   // Add a delete interview handler
   const handleDeleteInterview = async () => {
     if (!interview || !interview.id) return;
@@ -580,7 +483,7 @@ function InterviewDetails() {
               </span>
             </div>
             <p className="text-sm text-gray-500 mt-1">
-              {position} • {date}
+              {position} • {startDate}
             </p>
             <div className="flex items-center mt-2">
               <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md inline-flex items-center relative">
@@ -609,7 +512,7 @@ function InterviewDetails() {
                 )}
               </div>
               <div className="text-sm bg-gray-100 text-gray-800 px-3 py-1 rounded-md ml-2 relative inline-flex items-center">
-                <span className="font-medium">Email:</span> {interview.intervieweeEmail}
+                <span className="font-medium mr-1">Email: </span> {interview.intervieweeEmail}
                 <button 
                   className="ml-2 text-blue-600 hover:text-blue-800"
                   onClick={() => {
@@ -667,6 +570,7 @@ function InterviewDetails() {
           </div>
         </header>
 
+        {/* Add a live badge at the top of the page if it's currently live */}
         {effectiveStatus === InterviewStatus.Live && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex items-start gap-2">
             <Radio className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0 animate-pulse" />
@@ -681,7 +585,22 @@ function InterviewDetails() {
           </div>
         )}
 
-        {interview.status === InterviewStatus.NotCompleted ? (
+        {/* Add an expired notification if the interview has expired */}
+        {effectiveStatus === InterviewStatus.Expired && (
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-4 flex items-start gap-2">
+            <Clock className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-orange-700 text-sm font-medium">
+                This interview has expired
+              </p>
+              <p className="text-orange-600 text-xs">
+                Was scheduled for {interview.startDate} at {interview.startTime} ({interview.timezone}) with duration of {interview.duration} minutes
+              </p>
+            </div>
+          </div>
+        )}
+
+        {interview.status === InterviewStatus.NotCompleted && effectiveStatus !== InterviewStatus.Live ? (
           <div>
             <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
               <div className="mt-4 bg-gray-50 p-4 inline-block rounded-lg">
@@ -815,6 +734,14 @@ function InterviewDetails() {
                           updatedNewIds.delete(a.id);
                           setNewAnomalyIds(updatedNewIds);
                         }
+                        
+                        // If we have a timeElapsedFormatted, seek to that time
+                        if (a.metadata?.timeElapsedFormatted) {
+                          setSelectedAnomalyTime(a.metadata.timeElapsedFormatted);
+                          const [minutes, seconds] = a.metadata.timeElapsedFormatted.split(':').map(Number);
+                          const totalSeconds = minutes * 60 + seconds;
+                          handleVideoTimeUpdate(totalSeconds);
+                        }
                       }}
                     >
                       <AlertTriangle className={`h-4 w-4 ${
@@ -844,6 +771,29 @@ function InterviewDetails() {
           </div>
         ) : (
           <>
+            {/* Add SynchronizedVideos component for completed interviews */}
+            {interview.status === InterviewStatus.Completed && (
+              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+                <h2 className="text-lg font-medium mb-4">Interview Recordings</h2>
+                <SynchronizedVideos 
+                  interviewId={interview.id} 
+                  seekTime={selectedAnomalyTime}
+                  onTimeUpdate={handleVideoTimeUpdate}
+                />
+              </div>
+            )}
+
+            {/* Add SynchronizedStreams component for live interviews
+            {effectiveStatus === InterviewStatus.Live && (
+              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+                <h2 className="text-lg font-medium mb-4">Live Stream</h2>
+                <SynchronizedStreams 
+                  sessionId={interview.id}
+                  onTimeUpdate={handleVideoTimeUpdate}
+                />
+              </div>
+            )} */}
+
             {videoError && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 flex items-start gap-2">
                 <AlertTriangle className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
@@ -934,14 +884,19 @@ function InterviewDetails() {
                         a.id && newAnomalyIds.has(a.id) ? 'bg-yellow-50 border-l-2 border-yellow-500' : ''
                       }`}
                       onClick={() => {
-                        setCurrentTime(a.time);
-                        setVideoTime(a.time);
-                        
                         // Remove from new anomalies when clicked
                         if (a.id && newAnomalyIds.has(a.id)) {
                           const updatedNewIds = new Set(newAnomalyIds);
                           updatedNewIds.delete(a.id);
                           setNewAnomalyIds(updatedNewIds);
+                        }
+                        
+                        // If we have a timeElapsedFormatted, seek to that time
+                        if (a.metadata?.timeElapsedFormatted) {
+                          setSelectedAnomalyTime(a.metadata.timeElapsedFormatted);
+                          const [minutes, seconds] = a.metadata.timeElapsedFormatted.split(':').map(Number);
+                          const totalSeconds = minutes * 60 + seconds;
+                          handleVideoTimeUpdate(totalSeconds);
                         }
                       }}
                     >
@@ -956,9 +911,12 @@ function InterviewDetails() {
                           <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
                         )}
                       </span>
-                      <span className="text-gray-400">
-                        at {formatTime(a.time)}
-                      </span>
+                      {a.metadata?.timeElapsedFormatted &&
+                        <span className="text-gray-400">
+                          at {a.metadata?.timeElapsedFormatted}
+                        </span>
+                      }
+                      
                       {a.description && (
                         <span className="text-gray-600 ml-2">- {a.description}</span>
                       )}
@@ -968,24 +926,6 @@ function InterviewDetails() {
               )}
             </div>
 
-            {/* Chunk information */}
-            {(totalChunks.screen > 1 || totalChunks.webcam > 1) && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 flex items-start gap-2">
-                <Info className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <p className="text-blue-700 text-sm font-medium">Video chunks playing sequentially</p>
-                  <div className="text-blue-600 text-xs mt-1">
-                    {totalChunks.screen > 1 && (
-                      <p>Screen recording: Playing chunk {currentChunk.screen + 1} of {totalChunks.screen}</p>
-                    )}
-                    {totalChunks.webcam > 1 && (
-                      <p>Webcam recording: Playing chunk {currentChunk.webcam + 1} of {totalChunks.webcam}</p>
-                    )}
-                    <p className="mt-1">Each chunk will automatically play when the previous one finishes.</p>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         )}
       </main>

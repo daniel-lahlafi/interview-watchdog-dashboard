@@ -156,6 +156,12 @@ function Interviews() {
           bg: 'bg-blue-100 text-blue-800',
           Icon: Radio
         }
+      case InterviewStatus.Expired:
+        return {
+          label: 'Expired',
+          bg: 'bg-orange-100 text-orange-800',
+          Icon: Clock
+        }
       default:
         return {
           label: 'Not Completed',

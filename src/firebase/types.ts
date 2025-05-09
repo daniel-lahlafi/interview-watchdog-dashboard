@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { isInterviewLive, isInterviewExpired } from "../utils/statusChecks";
 
 export enum InterviewStatus {
   NotCompleted = 'Not Completed',
@@ -6,7 +7,7 @@ export enum InterviewStatus {
   Cheating = 'Cheating',
   Completed = 'Completed',
   Live = 'Live',
-  Scheduled = 'Scheduled',
+  Expired = 'Expired'
 }
 
 export interface Interview {
@@ -14,7 +15,6 @@ export interface Interview {
   interviewerId: string;
   candidate: string;
   position: string;
-  date: string;
   duration: string;
   screenVideo?: string;
   webcamVideo?: string;
@@ -40,63 +40,6 @@ export interface Anomaly {
 }
 
 /**
- * Determines if an interview is currently live based on its scheduled date, time, and duration
- * An interview is considered live if the current time falls within the scheduled period
- */
-export function isInterviewLive(interview: Interview): boolean {
-  // Return false if we don't have the required scheduling information
-  if (!interview.startDate || !interview.startTime || !interview.timezone || !interview.duration) {
-    return false;
-  }
-
-  try {
-    // Get the current time in the interview's timezone
-    const now = new Date();
-    const currentTimeInInterviewTimezone = new Date(
-      now.toLocaleString('en-US', { timeZone: interview.timezone })
-    );
-
-    // Parse the scheduled start time
-    const [startHours, startMinutes] = interview.startTime.split(':').map(Number);
-    
-    // Create a Date object for the scheduled start time in the interview's timezone
-    const scheduledStartDate = new Date(interview.startDate);
-    scheduledStartDate.setHours(startHours, startMinutes, 0, 0);
-    
-    // Convert the scheduled date to the interview's timezone
-    const scheduledStartInTimezone = new Date(
-      scheduledStartDate.toLocaleString('en-US', { timeZone: interview.timezone })
-    );
-    
-
-    
-    const startDateTime = DateTime.fromISO("2025-05-07T22:19", {
-      zone: interview.timezone,
-    });
-
-    const endDateTime = startDateTime.plus({ minutes: Number(interview.duration) });
-
-    const currentTime = DateTime.now().setZone(interview.timezone);
-
-    // Check if current time is between start and end times
-    const isLive = currentTime >= startDateTime && currentTime <= endDateTime;
-    
-    console.log('Interview live status check:', {
-      interviewId: interview.id,
-      currentTime: currentTime.toISO(),
-      startTime: startDateTime.toISO(),
-      endTime: endDateTime.toISO(),
-      isLive
-    });
-    
-    return isLive;
-  } catch (error) {
-    console.error('Error determining if interview is live:', error);
-    return false;
-  }
-}
-
-/**
  * Gets the current effective status of an interview, considering scheduled time
  * If an interview is scheduled and the current time is within the scheduled window,
  * it will return Live status regardless of the stored status
@@ -110,6 +53,16 @@ export function getEffectiveInterviewStatus(interview: Interview): InterviewStat
     isInterviewLive(interview)
   ) {
     return InterviewStatus.Live;
+  }
+  
+  // If the interview is scheduled and has expired, it's Expired
+  if (
+    interview.status !== InterviewStatus.Completed && 
+    interview.status !== InterviewStatus.Cheating &&
+    interview.status !== InterviewStatus.SuspiciousActivity &&
+    isInterviewExpired(interview)
+  ) {
+    return InterviewStatus.Expired;
   }
   
   // Otherwise, return the stored status
