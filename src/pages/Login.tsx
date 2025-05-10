@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Eye, EyeOff, Mail, Lock, AlertCircle } from 'lucide-react';
+import logo from '../assets/logo.png'
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -60,7 +61,7 @@ function Login() {
         <div className="text-center">
           <div className="flex justify-center mb-6">
             <img
-              src="/src/assets/logo.png"
+              src={logo}
               alt="Interview Watchdog Logo"
               className="h-16 w-auto"
             />
