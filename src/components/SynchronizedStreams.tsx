@@ -13,98 +13,205 @@ export const SynchronizedStreams: React.FC<SynchronizedStreamsProps> = ({
   onTimeUpdate 
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState<number>(0);
-  const [isDragging, setIsDragging] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0); // Default to 1 hour
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   
-  const cameraContainerRef = useRef<HTMLDivElement>(null);
-  const screenContainerRef = useRef<HTMLDivElement>(null);
+  // Use refs instead of state to track real-time values
+  const cameraTimeRef = useRef<number>(0);
+  const screenTimeRef = useRef<number>(0);
+  const lastSyncTimeRef = useRef<number>(0);
+  const isPlayingRef = useRef<boolean>(false);
+
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const screenVideoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const lastSeekTimeRef = useRef<string | undefined>(undefined);
-
-  // Function to convert MM:SS to seconds
-  const timeToSeconds = (timeStr: string): number => {
-    const [minutes, seconds] = timeStr.split(':').map(Number);
-    return minutes * 60 + seconds;
-  };
-
-  // Effect to handle seeking when seekTime changes
+  
+  // Update isPlayingRef whenever isPlaying state changes
   useEffect(() => {
-    if (seekTime && seekTime !== lastSeekTimeRef.current) {
-      lastSeekTimeRef.current = seekTime;
-      const seconds = timeToSeconds(seekTime);
-      setCurrentTime(seconds);
-      onTimeUpdate?.(seconds);
-    }
-  }, [seekTime, onTimeUpdate]);
-
-  const handleTimeUpdate = (time: number) => {
-    setCurrentTime(time);
-    onTimeUpdate?.(time);
-  };
-
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (timelineRef.current) {
-      const rect = timelineRef.current.getBoundingClientRect();
-      const clickPosition = e.clientX - rect.left;
-      const percentage = clickPosition / rect.width;
-      const newTime = percentage * 3600; // Assuming 1 hour max duration for live streams
-      
-      setCurrentTime(newTime);
-      onTimeUpdate?.(newTime);
-    }
-  };
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    setIsDragging(true);
-    handleTimelineClick(e);
-  };
-
-  const handleMouseMove = (e: MouseEvent) => {
-    if (isDragging && timelineRef.current) {
-      const rect = timelineRef.current.getBoundingClientRect();
-      const clickPosition = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-      const percentage = clickPosition / rect.width;
-      const newTime = percentage * 3600; // Assuming 1 hour max duration for live streams
-      
-      setCurrentTime(newTime);
-      onTimeUpdate?.(newTime);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
+    isPlayingRef.current = isPlaying;
+    console.log("isPlaying state changed to:", isPlaying);
+  }, [isPlaying]);
+  
+  // Effect to update duration when videos are loaded
   useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+    const updateDuration = () => {
+      if (cameraVideoRef.current && cameraVideoRef.current.duration && screenVideoRef.current && screenVideoRef.current.duration) {
+        const cameraDuration = cameraVideoRef.current.duration;
+        const screenDuration = screenVideoRef.current.duration;
+        const maxDuration = Math.max(cameraDuration, screenDuration);
+        if (cameraDuration !== Infinity && cameraDuration > 0 && screenDuration !== Infinity && screenDuration > 0) {
+          setDuration(maxDuration);
+        }
+      }
     };
-  }, [isDragging]);
+    
+    const cameraVideo = cameraVideoRef.current;
+    if (cameraVideo) {
+      cameraVideo.addEventListener('loadedmetadata', updateDuration);
+      cameraVideo.addEventListener('durationchange', updateDuration);
+    }
+    
+    return () => {
+      if (cameraVideo) {
+        cameraVideo.removeEventListener('loadedmetadata', updateDuration);
+        cameraVideo.removeEventListener('durationchange', updateDuration);
+      }
+    };
+  }, []);
+  
+  // Combined time update handler for both videos
+  const handleTimeUpdate = (time: number, source: 'camera' | 'screen') => {
+    console.log("handleTimeUpdate", time, source, isDragging);
+    if (isDragging) {
+      return;
+    }
 
+    // Update the appropriate time based on source
+    if (source === 'camera') {
+      cameraTimeRef.current = time;
+    } else {
+      screenTimeRef.current = time;
+    }
+    
+    // Get the current values from refs
+    const currentCameraTime = cameraTimeRef.current;
+    const currentScreenTime = screenTimeRef.current;
+    const currentIsPlaying = isPlayingRef.current;
+    
+    // Update the current time display with the max of both times
+    const maxTime = Math.max(currentCameraTime, currentScreenTime);
+    setCurrentTime(maxTime);
+    
+    // Update the parent component
+    onTimeUpdate?.(maxTime);
+    
+    // Only check sync if both videos have valid times and are playing
+    if (currentIsPlaying && currentCameraTime > 0 && currentScreenTime > 0 && !isDragging) {
+      // Calculate time difference between videos
+      const timeDiff = Math.abs(currentCameraTime - currentScreenTime);
+      
+      // Only sync if videos are out of sync by more than 2 seconds
+      // AND we haven't synced in the last 2 seconds (to avoid too frequent syncs)
+      const now = Date.now();
+      if (timeDiff > 2 && now - lastSyncTimeRef.current > 2000) {
+        // Update last sync time
+        lastSyncTimeRef.current = now;
+        
+        const maxTime = Math.max(currentCameraTime, currentScreenTime);
+        console.log(`Syncing videos: Camera ${currentCameraTime}, Screen ${currentScreenTime}, Gap ${timeDiff}s, Target ${maxTime}`);
+        
+        // Only seek the videos if we have refs to them
+        if (cameraVideoRef.current && screenVideoRef.current) {
+          // Set both videos to the max time
+          cameraVideoRef.current.currentTime = maxTime;
+          screenVideoRef.current.currentTime = maxTime;
+          
+          // Update our stored times
+          cameraTimeRef.current = maxTime;
+          screenTimeRef.current = maxTime;
+          
+          // Update the UI time
+          setCurrentTime(maxTime);
+          
+          // Update the parent component
+          onTimeUpdate?.(maxTime);
+        }
+      }
+    }
+  };
+  
+  // Format time in MM:SS format
   const formatTime = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.floor(seconds % 60);
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
-  const handlePlayPause = () => {
-    setIsPlaying(!isPlaying);
-  };
-
-  const handleFullscreen = (containerRef: React.RefObject<HTMLDivElement>) => {
-    if (containerRef.current) {
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
-      } else {
-        containerRef.current.requestFullscreen();
-      }
+  const handleLiveStreamTimeUpdate = (time: number) => {
+    if (cameraVideoRef.current && screenVideoRef.current) {
+      cameraVideoRef.current.currentTime = time;
+      screenVideoRef.current.currentTime = time;
+      cameraTimeRef.current = time;
+      screenTimeRef.current = time;
+      setCurrentTime(time);
     }
+  };
+  
+  // Timeline click handler
+  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!timelineRef.current) return;
+    
+    const rect = timelineRef.current.getBoundingClientRect();
+    const clickPosition = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickPosition / rect.width));
+    const newTime = percentage * duration;
+    
+    console.log(`Timeline clicked: ${percentage * 100}%, time: ${newTime}s`);
+    
+    if (cameraVideoRef.current && screenVideoRef.current) {
+      cameraVideoRef.current.currentTime = newTime;
+      screenVideoRef.current.currentTime = newTime;
+      cameraTimeRef.current = newTime;
+      screenTimeRef.current = newTime;
+      setCurrentTime(newTime);
+      // onTimeUpdate?.(newTime);
+    }
+  };
+  
+  // Mouse down handler for timeline dragging
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    setIsDragging(true);
+    handleTimelineClick(e);
+  };
+  
+  // Mouse move handler for timeline dragging
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isDragging || !timelineRef.current) return;
+    
+    const rect = timelineRef.current.getBoundingClientRect();
+    const movePosition = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const percentage = movePosition / rect.width;
+    const newTime = percentage * duration;
+    
+    // Only seek the camera video - sync function will handle the screen video
+    if (cameraVideoRef.current && screenVideoRef.current) {
+      cameraVideoRef.current.currentTime = newTime;
+      screenVideoRef.current.currentTime = newTime;
+      cameraTimeRef.current = newTime;
+      screenTimeRef.current = newTime;
+      setCurrentTime(newTime);
+      // onTimeUpdate?.(newTime);
+    }
+  };
+  
+  // Mouse up handler for timeline dragging
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+  
+  // Effect to handle mouse events for dragging
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    } else {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+    
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, duration]);
+  
+  const handlePlayPause = () => {
+    const newPlayState = !isPlaying;
+    setIsPlaying(newPlayState);
+    isPlayingRef.current = newPlayState; // Update ref immediately
+    console.log("Play button clicked, isPlaying set to:", newPlayState);
   };
 
   if (error) {
@@ -124,87 +231,75 @@ export const SynchronizedStreams: React.FC<SynchronizedStreamsProps> = ({
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4 p-4">
-        <div className="aspect-video relative" ref={cameraContainerRef}>
+        <div className="aspect-video">
           <LiveStreamPlayer
             sessionId={sessionId}
             streamType="camera"
-            pollIntervalMs={2000}
             isPlaying={isPlaying}
             currentTime={currentTime}
-            onTimeUpdate={handleTimeUpdate}
+            onTimeUpdate={(time) => handleTimeUpdate(time, 'camera')}
+            videoRef={cameraVideoRef}
+            onPlayPause={handlePlayPause}
+            duration={duration}
+            onLiveStreamTimeUpdate={handleLiveStreamTimeUpdate}
           />
-          <button
-            onClick={() => handleFullscreen(cameraContainerRef)}
-            className="absolute bottom-2 right-2 p-2 bg-black/50 hover:bg-black/70 rounded-lg text-white transition-colors"
-            title="Toggle fullscreen"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>
-            </svg>
-          </button>
         </div>
-        <div className="aspect-video relative" ref={screenContainerRef}>
+        
+        <div className="aspect-video">
           <LiveStreamPlayer
             sessionId={sessionId}
             streamType="screen"
-            pollIntervalMs={2000}
             isPlaying={isPlaying}
             currentTime={currentTime}
-            onTimeUpdate={handleTimeUpdate}
+            onTimeUpdate={(time) => handleTimeUpdate(time, 'screen')}
+            videoRef={screenVideoRef}
+            onPlayPause={handlePlayPause}
+            duration={duration}
+            onLiveStreamTimeUpdate={handleLiveStreamTimeUpdate}
           />
-          <button
-            onClick={() => handleFullscreen(screenContainerRef)}
-            className="absolute bottom-2 right-2 p-2 bg-black/50 hover:bg-black/70 rounded-lg text-white transition-colors"
-            title="Toggle fullscreen"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>
-            </svg>
-          </button>
         </div>
       </div>
-      <div className="flex justify-center">
-        <button
-          onClick={handlePlayPause}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-        >
-          {isPlaying ? (
-            <>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+
+      <div className="px-4">
+        <div className="flex items-center gap-4 mb-2">
+          <button
+            onClick={handlePlayPause}
+            className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            title={isPlaying ? "Pause" : "Play"}
+          >
+            {isPlaying ? (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
-              Pause
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            ) : (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
-              Play
-            </>
-          )}
-        </button>
-      </div>
-      <div className="px-4">
-        <div 
-          ref={timelineRef}
-          className="h-2 bg-gray-200 rounded-full cursor-pointer relative"
-          onClick={handleTimelineClick}
-        >
-          <div 
-            className="absolute h-full bg-blue-600 rounded-full"
-            style={{ width: `${(currentTime / 3600) * 100}%` }}
-          />
-          <div
-            className="absolute w-4 h-4 bg-blue-600 rounded-full -top-1 cursor-grab active:cursor-grabbing transform -translate-x-1/2 hover:scale-110 transition-transform"
-            style={{ left: `${(currentTime / 3600) * 100}%` }}
-            onMouseDown={handleMouseDown}
-          />
-        </div>
-        <div className="flex justify-between mt-2 text-sm text-gray-600">
-          <span>{formatTime(currentTime)}</span>
-          <span>60:00</span>
+            )}
+          </button>
+          
+          <div className="flex-1">
+            <div
+              ref={timelineRef}
+              className="h-2 bg-gray-200 rounded-full cursor-pointer relative"
+              onClick={handleTimelineClick}
+            >
+              <div
+                className="absolute h-full bg-blue-600 rounded-full"
+                style={{ width: `${(currentTime / duration) * 100}%` }}
+              />
+              <div
+                className="absolute w-4 h-4 bg-blue-600 rounded-full -top-1 cursor-grab active:cursor-grabbing transform -translate-x-1/2 hover:scale-110 transition-transform"
+                style={{ left: `${(currentTime / duration) * 100}%` }}
+                onMouseDown={handleMouseDown}
+              />
+            </div>
+            <div className="flex justify-between mt-2 text-sm text-gray-600">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

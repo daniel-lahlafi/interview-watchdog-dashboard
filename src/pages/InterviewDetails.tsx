@@ -8,7 +8,6 @@ import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types'
 import { isInterviewLive } from '../utils/statusChecks'
-import { SynchronizedVideos } from '../components/SynchronizedVideos'
 import { SynchronizedStreams } from '../components/SynchronizedStreams'
 import { DEFAULT_TIMEZONES } from './CreateInterview'
 import { DateTime } from 'luxon'
@@ -39,25 +38,12 @@ function InterviewDetails() {
   const [interview, setInterview] = useState<Interview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [allInterviews, setAllInterviews] = useState<Interview[]>([])
 
   // State for videos
-  const [screenVideoUrls, setScreenVideoUrls] = useState<string[]>([])
-  const [webcamVideoUrls, setWebcamVideoUrls] = useState<string[]>([])
   const [loadingVideo, setLoadingVideo] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
-  const [currentChunk, setCurrentChunk] = useState({ screen: 0, webcam: 0 })
-  const [totalChunks, setTotalChunks] = useState({ screen: 0, webcam: 0 })
   const [currentTime, setCurrentTime] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
   const [totalVideoDuration, setTotalVideoDuration] = useState(0)
-  
-  // State for WebRTC live streaming
-  const [webRTCStream, setWebRTCStream] = useState<any | null>(null)
-  const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null)
-  const [isStreamLoading, setIsStreamLoading] = useState(false)
-  const [streamError, setStreamError] = useState<string | null>(null)
-  const liveVideoRef = useRef<HTMLVideoElement>(null)
   
   // State for anomalies
   const [anomalies, setAnomalies] = useState<Anomaly[]>([])
@@ -81,12 +67,7 @@ function InterviewDetails() {
   
   // Refs
   const timelineRef = useRef<HTMLDivElement>(null)
-  const animationRef = useRef<number | null>(null)
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Add state to track hover on seekbar
-  const [isSeekbarHovered, setIsSeekbarHovered] = useState(false);
-  const [hoverPosition, setHoverPosition] = useState(0);
 
   // Add state variables for edit modal
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
@@ -102,13 +83,6 @@ function InterviewDetails() {
   const [editError, setEditError] = useState<string | null>(null);
   const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
 
-  // Add this with other state declarations at the top of the component
-  const [selectedAnomalyTime, setSelectedAnomalyTime] = useState<string | undefined>(undefined);
-
-  const handleDurationChange = useCallback((duration: number) => {
-    console.log(`Total video duration updated: ${duration.toFixed(2)}s`)
-    setTotalVideoDuration(duration)
-  }, [])
 
   const handleVideoTimeUpdate = useCallback((time: number) => {
     // Only update if the time difference is significant to avoid small oscillations
@@ -116,16 +90,6 @@ function InterviewDetails() {
       setCurrentTime(time)
     }
   }, [currentTime])
-
-  // Function to handle mouse move over the seekbar
-  const handleSeekbarMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (timelineRef.current) {
-      const { left, width } = timelineRef.current.getBoundingClientRect();
-      const mouseX = e.clientX - left;
-      const boundedMouseX = Math.max(0, Math.min(mouseX, width));
-      setHoverPosition(boundedMouseX / width);
-    }
-  };
 
   // Effects - in a consistent order
   // 1. Data fetching effect
@@ -150,9 +114,6 @@ function InterviewDetails() {
           setInterview(interviewData)
         }
         
-        console.log(`Fetching interviews for user ID: ${user?.uid}`)
-        const interviews = await interviewService.getInterviewsByInterviewer(user?.uid ?? '')
-        setAllInterviews(interviews)
       } catch (err) {
         console.error('Failed to fetch interview data:', err)
         setError('Failed to fetch interview data')
@@ -171,11 +132,6 @@ function InterviewDetails() {
     return () => {
       if (loadingTimeoutRef.current) {
         clearTimeout(loadingTimeoutRef.current)
-      }
-      
-      // Close WebRTC connection if exists
-      if (peerConnection) {
-        peerConnection.close()
       }
     }
   }, [id, user?.uid])
@@ -258,6 +214,32 @@ function InterviewDetails() {
     return () => unsubscribe();
   }, [id, interview?.status]); // Only re-run when interview ID or status changes
 
+  // Add real-time listener for interview status changes
+  useEffect(() => {
+    if (!id) return;
+
+    // Set up real-time listener for the interview document
+    const interviewRef = doc(db, 'interviews', id);
+    const unsubscribe = onSnapshot(interviewRef, (doc) => {
+      if (doc.exists()) {
+        const interviewData = doc.data() as Interview;
+
+        // If the interview status changes to completed, refresh the page
+        if (interview && interview.status !== interviewData.status && interviewData.status === InterviewStatus.Completed) {
+          console.log('Interview completed, refreshing page...');
+          window.location.reload();
+        }
+        
+        setInterview(interviewData);
+      }
+    }, (error) => {
+      console.error('Error in interview listener:', error);
+    });
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, [id]);
+
   // Event handlers
   const refreshPage = () => {
     window.location.reload()
@@ -303,32 +285,6 @@ function InterviewDetails() {
     } finally {
       setLoading(false);
       setShowDeleteConfirm(false);
-    }
-  };
-
-  // Format time for display
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-  
-  // Function to set video time
-  const setVideoTime = (time: number) => {
-    if (totalVideoDuration > 0) {
-      const newTime = Math.min(Math.max(0, time), totalVideoDuration);
-      setCurrentTime(newTime);
-      
-      const videoElements = document.querySelectorAll('video');
-      videoElements.forEach(video => {
-        if (video && !isNaN(newTime)) {
-          try {
-            video.currentTime = newTime;
-          } catch (e) {
-            console.error('Error setting video time:', e);
-          }
-        }
-      });
     }
   };
   
@@ -772,7 +728,7 @@ function InterviewDetails() {
         ) : (
           <>
             {/* Add SynchronizedVideos component for completed interviews */}
-            {interview.status === InterviewStatus.Completed && (
+            {/* {interview.status === InterviewStatus.Completed && (
               <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
                 <h2 className="text-lg font-medium mb-4">Interview Recordings</h2>
                 <SynchronizedVideos 
@@ -781,10 +737,10 @@ function InterviewDetails() {
                   onTimeUpdate={handleVideoTimeUpdate}
                 />
               </div>
-            )}
+            )} */}
 
-            {/* Add SynchronizedStreams component for live interviews
-            {effectiveStatus === InterviewStatus.Live && (
+            {/* Add SynchronizedStreams component for live interviews */}
+            {/* {effectiveStatus === InterviewStatus.Live && ( */}
               <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
                 <h2 className="text-lg font-medium mb-4">Live Stream</h2>
                 <SynchronizedStreams 
@@ -792,7 +748,7 @@ function InterviewDetails() {
                   onTimeUpdate={handleVideoTimeUpdate}
                 />
               </div>
-            )} */}
+            {/* )}  */}
 
             {videoError && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 flex items-start gap-2">
@@ -893,7 +849,6 @@ function InterviewDetails() {
                         
                         // If we have a timeElapsedFormatted, seek to that time
                         if (a.metadata?.timeElapsedFormatted) {
-                          setSelectedAnomalyTime(a.metadata.timeElapsedFormatted);
                           const [minutes, seconds] = a.metadata.timeElapsedFormatted.split(':').map(Number);
                           const totalSeconds = minutes * 60 + seconds;
                           handleVideoTimeUpdate(totalSeconds);
