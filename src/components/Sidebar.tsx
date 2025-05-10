@@ -1,8 +1,9 @@
 // Sidebar.tsx
 import React from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Home, FileText, Settings, LogOut } from 'lucide-react'
 import logo from '../assets/logo.png'
+import { useAuth } from '../contexts/AuthContext'
 
 const navItems = [
   { to: '/create-interview', icon: <FileText className="h-5 w-5" />, label: 'Create Interview' },
@@ -13,6 +14,17 @@ const navItems = [
 
 export default function Sidebar() {
   const { pathname } = useLocation()
+  const { signOut } = useAuth()
+  const navigate = useNavigate()
+
+  const handleLogout = async () => {
+    try {
+      await signOut()
+      navigate('/login')
+    } catch (error) {
+      console.error('Failed to log out:', error)
+    }
+  }
 
   return (
     <nav className="
@@ -71,13 +83,13 @@ export default function Sidebar() {
           })}
         </div>
         <div className="px-2 pb-4">
-          <Link
-            to="/logout"
-            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-md"
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-md"
           >
             <LogOut className="h-5 w-5" />
             Logout
-          </Link>
+          </button>
         </div>
       </div>
     </nav>
