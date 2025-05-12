@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio, Edit, X, Check, Clock } from 'lucide-react'
+import { AlertTriangle, Eye, PlayCircle, PauseCircle, SkipBack, SkipForward, RefreshCw, Info, Radio, Edit, X, Check, Clock, Plus } from 'lucide-react'
 import interviewService from '../firebase/services'
 import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
@@ -80,7 +80,11 @@ function InterviewDetails() {
     startTime: '',
     timezone: '',
     duration: '',
+    meetingLink: '',
   });
+  
+  // Add a separate state for links as an array
+  const [editLinks, setEditLinks] = useState<string[]>(['']);
   
   // New state variable for edit form error and success
   const [editError, setEditError] = useState<string | null>(null);
@@ -319,15 +323,41 @@ function InterviewDetails() {
         startTime: interview.startTime || '',
         timezone: interview.timezone || '',
         duration: interview.duration?.toString() || '',
+        meetingLink: (interview as any).meetingLink || '',
       });
+      
+      // Initialize editLinks from interview
+      const interviewLinks = (interview as any).links;
+      if (Array.isArray(interviewLinks) && interviewLinks.length > 0) {
+        setEditLinks(interviewLinks);
+      } else {
+        setEditLinks(['']); // Start with one empty link
+      }
+      
       setShowEditModal(true);
     }
   };
   
   // Handle edit form input changes
-  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setEditFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Functions to handle links in the edit modal
+  const handleEditLinkChange = (index: number, value: string) => {
+    const newLinks = [...editLinks];
+    newLinks[index] = value;
+    setEditLinks(newLinks);
+  };
+
+  const addEditLink = () => {
+    setEditLinks([...editLinks, '']);
+  };
+
+  const removeEditLink = (index: number) => {
+    const newLinks = editLinks.filter((_, i) => i !== index);
+    setEditLinks(newLinks);
   };
   
   // Handle saving interview updates
@@ -345,6 +375,9 @@ function InterviewDetails() {
       // Extract the access code from the old ID (format is email:code)
       const accessCode = interview.accessCode;
       
+      // Filter out empty links
+      const validLinks = editLinks.filter(link => link.trim() !== '');
+      
       // Prepare updated interview data
       const updatedData = {
         intervieweeEmail: editFormData.intervieweeEmail,
@@ -352,6 +385,8 @@ function InterviewDetails() {
         startTime: editFormData.startTime,
         timezone: editFormData.timezone,
         duration: editFormData.duration,
+        meetingLink: editFormData.meetingLink,
+        links: validLinks,
       };
       
       if (isEmailChanging) {
@@ -375,7 +410,7 @@ function InterviewDetails() {
         await interviewService.deleteInterview(interview.id);
         
         // Update local state with the new interview ID
-        setInterview({ ...completeUpdatedInterview, id: newId });
+        setInterview({ ...completeUpdatedInterview, id: newId } as any);
         
         // Also update the URL to reflect the new ID without reloading the page
         window.history.replaceState(null, '', `/interviews/${newId}`);
@@ -384,7 +419,7 @@ function InterviewDetails() {
         await interviewService.updateInterview(interview.id, updatedData);
         
         // Update local state
-        setInterview({ ...interview, ...updatedData });
+        setInterview({ ...interview, ...updatedData } as any);
       }
       
       // Show success message
@@ -903,7 +938,7 @@ function InterviewDetails() {
       {/* Edit Interview Modal */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+          <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium text-gray-900">Edit Interview</h3>
               <button
@@ -1002,6 +1037,56 @@ function InterviewDetails() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Meeting Link
+                </label>
+                <input
+                  type="url"
+                  name="meetingLink"
+                  value={editFormData.meetingLink}
+                  onChange={handleEditInputChange}
+                  placeholder="https://zoom.us/j/123456789"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              
+              {/* Links Section - Using the same design as CreateInterview */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-medium text-gray-900">Interview Links</h3>
+                <p className="text-sm text-gray-500">Add URLs that will open when the interview starts.</p>
+                
+                {editLinks.map((link, index) => (
+                  <div key={index} className="flex gap-2">
+                    <input
+                      type="url"
+                      value={link}
+                      onChange={(e) => handleEditLinkChange(index, e.target.value)}
+                      placeholder="https://example.com"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {editLinks.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeEditLink(index)}
+                        className="p-2 text-gray-500 hover:text-red-500 rounded-md hover:bg-gray-100"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                
+                <button
+                  type="button"
+                  onClick={addEditLink}
+                  className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Another Link
+                </button>
               </div>
             </div>
             
