@@ -34,7 +34,7 @@ export interface Anomaly {
   id?: string;
   time: number;
   type: string;
-  description?: string;
+  details?: string;
   severity?: 'low' | 'medium' | 'high';
   metadata?: Record<string, any>; // Additional data from the cheating record
 }

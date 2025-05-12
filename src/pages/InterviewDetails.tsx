@@ -8,7 +8,7 @@ import type { Interview, Anomaly } from '../firebase/types'
 import { useAuth } from '../contexts/AuthContext'
 import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types'
 import { isInterviewLive } from '../utils/statusChecks'
-import { SynchronizedStreams } from '../components/SynchronizedStreams'
+import { SynchronizedStreams, SynchronizedStreamsRef } from '../components/SynchronizedStreams'
 import { DEFAULT_TIMEZONES } from './CreateInterview'
 import { DateTime } from 'luxon'
 import { doc, onSnapshot, query, collection, where } from 'firebase/firestore'
@@ -44,6 +44,9 @@ function InterviewDetails() {
   const [videoError, setVideoError] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [totalVideoDuration, setTotalVideoDuration] = useState(0)
+  
+  // Create refs for the synchronized streams component
+  const synchronizedStreamsRef = useRef<SynchronizedStreamsRef>(null)
   
   // State for anomalies
   const [anomalies, setAnomalies] = useState<Anomaly[]>([])
@@ -83,6 +86,25 @@ function InterviewDetails() {
   const [editError, setEditError] = useState<string | null>(null);
   const [updateSuccess, setUpdateSuccess] = useState<boolean>(false);
 
+  // Function to seek to a specific time
+  const seekToTime = (timeString: string) => {
+    if (!timeString) return
+    
+    // Parse MM:SS format to seconds
+    const [minutes, seconds] = timeString.split(':').map(Number)
+    const totalSeconds = minutes * 60 + seconds
+    
+    // Set current time directly
+    setCurrentTime(totalSeconds)
+    
+    // Use the ref to call seeking method if available
+    if (synchronizedStreamsRef.current) {
+      synchronizedStreamsRef.current.seekToTime(totalSeconds)
+    } else {
+      // Fallback to handleVideoTimeUpdate if ref method is not available
+      handleVideoTimeUpdate(totalSeconds)
+    }
+  }
 
   const handleVideoTimeUpdate = useCallback((time: number) => {
     // Only update if the time difference is significant to avoid small oscillations
@@ -157,7 +179,7 @@ function InterviewDetails() {
           id: doc.id,
           time: data.timestamp || 0,
           type: data.type || 'Unknown',
-          description: data.description || '',
+          details: data.details || '',
           severity: data.severity || 'medium',
           metadata: data
         } as Anomaly;
@@ -644,6 +666,8 @@ function InterviewDetails() {
                   )}
                 </span>
                 
+                {/* Only use effectiveStatus as a readonly value, do not compare */}
+                {/* Show real-time monitoring message for any interview with anomalies */}
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
                     <input
@@ -655,7 +679,7 @@ function InterviewDetails() {
                     <span className="whitespace-nowrap">Sound Alerts</span>
                   </label>
                   
-                  {effectiveStatus === InterviewStatus.Live && (
+                  {anomalies.length > 0 && (
                     <span className="flex items-center text-sm text-blue-600">
                       <Radio className="h-3 w-3 mr-1 animate-pulse" />
                       Real-time monitoring
@@ -671,7 +695,7 @@ function InterviewDetails() {
               
               {anomalies.length === 0 ? (
                 <p className="text-gray-500">
-                  {effectiveStatus === InterviewStatus.Live 
+                  {newAnomaliesCount > 0
                     ? "No anomalies detected yet. Monitoring in real-time." 
                     : "No anomalies detected for this interview yet."}
                 </p>
@@ -681,7 +705,11 @@ function InterviewDetails() {
                     <div
                       key={a.id || i}
                       className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
-                        a.id && newAnomalyIds.has(a.id) ? 'bg-yellow-50 border-l-2 border-yellow-500' : ''
+                        a.id && newAnomalyIds.has(a.id) 
+                          ? (a.severity as string) === 'warning'
+                            ? 'bg-yellow-50 border-l-2 border-yellow-500' 
+                            : 'bg-red-50 border-l-2 border-red-500'
+                          : ''
                       }`}
                       onClick={() => {
                         // Remove from new anomalies when clicked
@@ -693,10 +721,7 @@ function InterviewDetails() {
                         
                         // If we have a timeElapsedFormatted, seek to that time
                         if (a.metadata?.timeElapsedFormatted) {
-                          setSelectedAnomalyTime(a.metadata.timeElapsedFormatted);
-                          const [minutes, seconds] = a.metadata.timeElapsedFormatted.split(':').map(Number);
-                          const totalSeconds = minutes * 60 + seconds;
-                          handleVideoTimeUpdate(totalSeconds);
+                          seekToTime(a.metadata.timeElapsedFormatted);
                         }
                       }}
                     >
@@ -706,7 +731,7 @@ function InterviewDetails() {
                         a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
                       }`} />
                       <span className="font-medium">
-                        {a.type}
+                        {a.details}
                         {a.id && newAnomalyIds.has(a.id) && (
                           <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
                         )}
@@ -716,8 +741,8 @@ function InterviewDetails() {
                           at {a.metadata?.timeElapsedFormatted }
                         </span>
                       )}
-                      {a.description && (
-                        <span className="text-gray-600 ml-2">- {a.description}</span>
+                      {a.metadata?.description && (
+                        <span className="text-gray-600 ml-2">- {a.metadata.description}</span>
                       )}
                     </div>
                   ))}
@@ -727,28 +752,15 @@ function InterviewDetails() {
           </div>
         ) : (
           <>
-            {/* Add SynchronizedVideos component for completed interviews */}
-            {/* {interview.status === InterviewStatus.Completed && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-                <h2 className="text-lg font-medium mb-4">Interview Recordings</h2>
-                <SynchronizedVideos 
-                  interviewId={interview.id} 
-                  seekTime={selectedAnomalyTime}
-                  onTimeUpdate={handleVideoTimeUpdate}
-                />
-              </div>
-            )} */}
-
             {/* Add SynchronizedStreams component for live interviews */}
-            {/* {effectiveStatus === InterviewStatus.Live && ( */}
-              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-                <h2 className="text-lg font-medium mb-4">Live Stream</h2>
-                <SynchronizedStreams 
-                  sessionId={interview.id}
-                  onTimeUpdate={handleVideoTimeUpdate}
-                />
-              </div>
-            {/* )}  */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+              <h2 className="text-lg font-medium mb-4">Live Stream</h2>
+              <SynchronizedStreams 
+                sessionId={interview.id}
+                onTimeUpdate={handleVideoTimeUpdate}
+                ref={synchronizedStreamsRef}
+              />
+            </div>
 
             {videoError && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-4 flex items-start gap-2">
@@ -800,6 +812,8 @@ function InterviewDetails() {
                   )}
                 </span>
                 
+                {/* Only use effectiveStatus as a readonly value, do not compare */}
+                {/* Show real-time monitoring message for any interview with anomalies */}
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
                     <input
@@ -811,7 +825,7 @@ function InterviewDetails() {
                     <span className="whitespace-nowrap">Sound Alerts</span>
                   </label>
                   
-                  {effectiveStatus === InterviewStatus.Live && (
+                  {anomalies.length > 0 && (
                     <span className="flex items-center text-sm text-blue-600">
                       <Radio className="h-3 w-3 mr-1 animate-pulse" />
                       Real-time monitoring
@@ -827,9 +841,9 @@ function InterviewDetails() {
               
               {anomalies.length === 0 ? (
                 <p className="text-gray-500">
-                  {effectiveStatus === InterviewStatus.Live 
+                  {newAnomaliesCount > 0
                     ? "No anomalies detected yet. Monitoring in real-time." 
-                    : "No anomalies detected during this interview."}
+                    : "No anomalies detected for this interview yet."}
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -837,7 +851,11 @@ function InterviewDetails() {
                     <div
                       key={a.id || i}
                       className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
-                        a.id && newAnomalyIds.has(a.id) ? 'bg-yellow-50 border-l-2 border-yellow-500' : ''
+                        a.id && newAnomalyIds.has(a.id) 
+                          ? (a.severity as string) === 'warning'
+                            ? 'bg-yellow-50 border-l-2 border-yellow-500' 
+                            : 'bg-red-50 border-l-2 border-red-500'
+                          : ''
                       }`}
                       onClick={() => {
                         // Remove from new anomalies when clicked
@@ -849,9 +867,7 @@ function InterviewDetails() {
                         
                         // If we have a timeElapsedFormatted, seek to that time
                         if (a.metadata?.timeElapsedFormatted) {
-                          const [minutes, seconds] = a.metadata.timeElapsedFormatted.split(':').map(Number);
-                          const totalSeconds = minutes * 60 + seconds;
-                          handleVideoTimeUpdate(totalSeconds);
+                          seekToTime(a.metadata.timeElapsedFormatted);
                         }
                       }}
                     >
@@ -861,19 +877,18 @@ function InterviewDetails() {
                         a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
                       }`} />
                       <span className="font-medium">
-                        {a.type}
+                        {a.details}
                         {a.id && newAnomalyIds.has(a.id) && (
                           <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
                         )}
                       </span>
-                      {a.metadata?.timeElapsedFormatted &&
+                      {a.metadata?.timeElapsedFormatted && (
                         <span className="text-gray-400">
-                          at {a.metadata?.timeElapsedFormatted}
+                          at {a.metadata?.timeElapsedFormatted }
                         </span>
-                      }
-                      
-                      {a.description && (
-                        <span className="text-gray-600 ml-2">- {a.description}</span>
+                      )}
+                      {a.metadata?.description && (
+                        <span className="text-gray-600 ml-2">- {a.metadata.description}</span>
                       )}
                     </div>
                   ))}

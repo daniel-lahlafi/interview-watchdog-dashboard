@@ -24,13 +24,13 @@ export function isInterviewLive(interview: Interview): boolean {
       // Check if current time is between start and end times
       const isLive = currentTime >= startDateTime && currentTime <= endDateTime;
       
-      console.log('Interview live status check:', {
-        interviewId: interview.id,
-        currentTime: currentTime.toISO(),
-        startTime: startDateTime.toISO(),
-        endTime: endDateTime.toISO(),
-        isLive
-      });
+      // console.log('Interview live status check:', {
+      //   interviewId: interview.id,
+      //   currentTime: currentTime.toISO(),
+      //   startTime: startDateTime.toISO(),
+      //   endTime: endDateTime.toISO(),
+      //   isLive
+      // });
       
       return isLive;
     } catch (error) {

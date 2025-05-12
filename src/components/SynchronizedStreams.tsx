@@ -1,17 +1,24 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import LiveStreamPlayer from './LiveStreamPlayer';
 
 interface SynchronizedStreamsProps {
   sessionId: string;
-  seekTime?: string; // MM:SS format
+  seekTime?: string | number; // MM:SS format or seconds
   onTimeUpdate?: (time: number) => void;
 }
 
-export const SynchronizedStreams: React.FC<SynchronizedStreamsProps> = ({ 
+// Export interface for the ref methods
+export interface SynchronizedStreamsRef {
+  seekToTime: (seconds: number) => void;
+  play: () => void;
+  pause: () => void;
+}
+
+export const SynchronizedStreams = forwardRef<SynchronizedStreamsRef, SynchronizedStreamsProps>(({ 
   sessionId, 
   seekTime,
   onTimeUpdate 
-}) => {
+}, ref) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0); // Default to 1 hour
@@ -27,6 +34,34 @@ export const SynchronizedStreams: React.FC<SynchronizedStreamsProps> = ({
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
+  
+  // Expose methods via useImperativeHandle
+  useImperativeHandle(ref, () => ({
+    seekToTime: (seconds: number) => {
+      if (cameraVideoRef.current && screenVideoRef.current) {
+        console.log(`Seeking to ${seconds} seconds via ref method`);
+        cameraVideoRef.current.currentTime = seconds;
+        screenVideoRef.current.currentTime = seconds;
+        cameraTimeRef.current = seconds;
+        screenTimeRef.current = seconds;
+        setCurrentTime(seconds);
+      }
+    },
+    play: () => {
+      if (cameraVideoRef.current && screenVideoRef.current) {
+        cameraVideoRef.current.play();
+        screenVideoRef.current.play();
+        setIsPlaying(true);
+      }
+    },
+    pause: () => {
+      if (cameraVideoRef.current && screenVideoRef.current) {
+        cameraVideoRef.current.pause();
+        screenVideoRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  }));
   
   // Update isPlayingRef whenever isPlaying state changes
   useEffect(() => {
@@ -304,6 +339,6 @@ export const SynchronizedStreams: React.FC<SynchronizedStreamsProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default SynchronizedStreams; 

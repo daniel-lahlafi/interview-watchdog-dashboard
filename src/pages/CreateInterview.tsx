@@ -128,6 +128,7 @@ export default function CreateInterview() {
     timezone: userTimezone,
     duration: '60',
     intervieweeEmail: '',
+    meetingLink: '',
   });
 
   // Generate timezone information once on component mount
@@ -194,6 +195,7 @@ export default function CreateInterview() {
         status: InterviewStatus.NotCompleted,
         intervieweeEmail: formData.intervieweeEmail,
         links: validLinks,
+        meetingLink: formData.meetingLink,
       };
 
       const interviewId = (await interviewService.createInterview(interviewData)).id;
@@ -333,6 +335,24 @@ export default function CreateInterview() {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Meeting Link Section */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Meeting Link
+          </label>
+          <input
+            type="url"
+            name="meetingLink"
+            value={formData.meetingLink}
+            onChange={handleInputChange}
+            placeholder="https://meet.google.com/xxx-xxxx-xxx"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Add a Zoom, Google Meet, or other video conferencing link
+          </p>
         </div>
 
         {/* Links Section */}
