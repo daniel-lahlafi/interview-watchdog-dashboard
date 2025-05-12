@@ -1,5 +1,5 @@
 // App.tsx
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
@@ -9,6 +9,25 @@ import Settings from './pages/Settings'
 import CreateInterview from './pages/CreateInterview'
 import Login from './pages/Login'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+
+// Simple version component that only returns the version text
+function DesktopVersionRoute() {
+  useEffect(() => {
+    // Clear any existing content
+    document.body.innerHTML = '';
+    
+    // Set plain styling to avoid any React formatting
+    document.body.style.cssText = 'white-space: pre; font-family: monospace; padding: 0; margin: 0;';
+    
+    // Add plain text version number
+    document.body.appendChild(document.createTextNode('1.0.0'));
+    
+    // Clear the title
+    document.title = '';
+  }, []);
+  
+  return null;
+}
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -41,6 +60,9 @@ function App() {
     <Router>
       <AuthProvider>
         <Routes>
+          {/* Public route for desktop version - special handling */}
+          <Route path="/desktop-version" element={<DesktopVersionRoute />} />
+          
           {/* Login route - needs auth but no sidebar */}
           <Route path="/login" element={<Login />} />
           
