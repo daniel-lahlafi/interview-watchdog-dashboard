@@ -170,13 +170,13 @@ function InterviewDetails() {
     const effectiveStatus = getEffectiveInterviewStatus(interview);
     const isLive = effectiveStatus === InterviewStatus.Live;
     
-    if (!isLive) return; // Only set up real-time listener for live interviews
-    
     console.log(`Setting up real-time anomaly detection for interview ${id}`);
     
     // Set up real-time listener for anomalies directly using Firebase
     const q = query(collection(db, 'cheating'), where("interviewId", "==", id));
+    console.log("q", q);
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log("snapshot", snapshot);
       const updatedAnomalies: Anomaly[] = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
