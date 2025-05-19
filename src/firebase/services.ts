@@ -280,6 +280,33 @@ export const interviewService = {
     }
   },
 
+  // Add function to delete an anomaly
+  deleteAnomaly: async (anomalyId: string, interviewId: string): Promise<void> => {
+    try {
+      // Delete the anomaly
+      const docRef = doc(db, 'cheating', anomalyId);
+      await deleteDoc(docRef);
+
+      // Get all remaining anomalies for this interview
+      const q = query(cheatingCollection, where("interviewId", "==", interviewId));
+      const snapshot = await getDocs(q);
+      
+      // Check if there are any remaining cheating or suspicious anomalies
+      const hasCheating = snapshot.docs.some(doc => doc.data().severity === 'cheating');
+      const hasSuspicious = snapshot.docs.some(doc => doc.data().severity === 'suspicious');
+
+      // Update the interview document
+      const interviewRef = doc(db, 'interviews', interviewId);
+      await updateDoc(interviewRef, {
+        cheating: hasCheating,
+        suspiciousActivity: hasSuspicious
+      });
+    } catch (error) {
+      console.error('Error deleting anomaly:', error);
+      throw error;
+    }
+  },
+
   // Schedule a new interview with specific date and time
   scheduleInterview: async (interview: Omit<Interview, 'id' | 'status' | 'accessCode'>, scheduledDateTime: Date): Promise<{ id: string; accessCode: string }> => {
     try {

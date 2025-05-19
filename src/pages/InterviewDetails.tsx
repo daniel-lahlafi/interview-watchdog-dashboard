@@ -88,6 +88,14 @@ function InterviewDetails() {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   
+  // Add state for anomaly deletion
+  const [deletingAnomalyId, setDeletingAnomalyId] = useState<string | null>(null);
+  const [anomalyDeleteError, setAnomalyDeleteError] = useState<string | null>(null);
+  
+  // Add state for anomaly deletion confirmation
+  const [showAnomalyDeleteConfirm, setShowAnomalyDeleteConfirm] = useState(false);
+  const [anomalyToDelete, setAnomalyToDelete] = useState<Anomaly | null>(null);
+  
   // Add a separate state for links as an array
   const [editLinks, setEditLinks] = useState<string[]>(['']);
   
@@ -468,6 +476,29 @@ function InterviewDetails() {
     }
   }, [interview]);
 
+  // Update the handleDeleteAnomaly function
+  const handleDeleteAnomaly = async (anomalyId: string) => {
+    try {
+      if (!id) return;
+      setDeletingAnomalyId(anomalyId);
+      setAnomalyDeleteError(null);
+      await interviewService.deleteAnomaly(anomalyId, id);
+      setShowAnomalyDeleteConfirm(false);
+      setAnomalyToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete anomaly:', err);
+      setAnomalyDeleteError('Failed to delete anomaly. Please try again.');
+    } finally {
+      setDeletingAnomalyId(null);
+    }
+  };
+
+  // Add function to handle anomaly deletion confirmation
+  const handleAnomalyDeleteClick = (anomaly: Anomaly) => {
+    setAnomalyToDelete(anomaly);
+    setShowAnomalyDeleteConfirm(true);
+  };
+
   // guard: loading state
   if (loading) {
     return (
@@ -561,6 +592,85 @@ function InterviewDetails() {
       </div>
     );
   };
+
+  // Update the anomalies list rendering to use the new confirmation flow
+  const renderAnomaliesList = () => (
+    <div className="space-y-2">
+      {anomalies.map((a, i) => (
+        <div
+          key={a.id || i}
+          className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded ${
+            a.id && newAnomalyIds.has(a.id) 
+              ? (a.severity as string) === 'suspicious'
+                ? 'bg-yellow-50 border-l-2 border-yellow-500' 
+                : 'bg-red-50 border-l-2 border-red-500'
+              : ''
+          }`}
+        >
+          <div 
+            className="flex-1 flex items-center gap-2 cursor-pointer"
+            onClick={() => {
+              // Remove from new anomalies when clicked
+              if (a.id && newAnomalyIds.has(a.id)) {
+                const updatedNewIds = new Set(newAnomalyIds);
+                updatedNewIds.delete(a.id);
+                setNewAnomalyIds(updatedNewIds);
+              }
+              
+              // If we have a timeElapsedFormatted, seek to that time
+              if (a.metadata?.timeElapsedFormatted) {
+                seekToTime(a.metadata.timeElapsedFormatted);
+              }
+            }}
+          >
+            <AlertTriangle className={`h-4 w-4 ${
+              a.id && newAnomalyIds.has(a.id) ? 'text-red-500 animate-pulse' :
+              (a.severity as string) === 'cheating' ? 'text-red-500' : 'text-yellow-500'
+            }`} />
+            <span className="font-medium">
+              {a.details}
+              {a.id && newAnomalyIds.has(a.id) && (
+                <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
+              )}
+            </span>
+            {a.metadata?.timeElapsedFormatted && (
+              <span className="text-gray-400">
+                at {a.metadata?.timeElapsedFormatted }
+              </span>
+            )}
+            {a.metadata?.description && (
+              <span className="text-gray-600 ml-2">- {a.metadata.description}</span>
+            )}
+          </div>
+          {a.id && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAnomalyDeleteClick(a);
+              }}
+              className="p-1 text-gray-400 hover:text-red-500 rounded-full hover:bg-gray-100 transition-colors"
+              title="Remove anomaly"
+              disabled={deletingAnomalyId === a.id}
+            >
+              {deletingAnomalyId === a.id ? (
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                <X className="h-4 w-4" />
+              )}
+            </button>
+          )}
+        </div>
+      ))}
+      {anomalyDeleteError && (
+        <div className="text-red-500 text-sm mt-2">
+          {anomalyDeleteError}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -824,53 +934,7 @@ function InterviewDetails() {
                     : "No anomalies detected for this interview yet."}
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {anomalies.map((a, i) => (
-                    <div
-                      key={a.id || i}
-                      className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
-                        a.id && newAnomalyIds.has(a.id) 
-                          ? (a.severity as string) === 'warning'
-                            ? 'bg-yellow-50 border-l-2 border-yellow-500' 
-                            : 'bg-red-50 border-l-2 border-red-500'
-                          : ''
-                      }`}
-                      onClick={() => {
-                        // Remove from new anomalies when clicked
-                        if (a.id && newAnomalyIds.has(a.id)) {
-                          const updatedNewIds = new Set(newAnomalyIds);
-                          updatedNewIds.delete(a.id);
-                          setNewAnomalyIds(updatedNewIds);
-                        }
-                        
-                        // If we have a timeElapsedFormatted, seek to that time
-                        if (a.metadata?.timeElapsedFormatted) {
-                          seekToTime(a.metadata.timeElapsedFormatted);
-                        }
-                      }}
-                    >
-                      <AlertTriangle className={`h-4 w-4 ${
-                        a.id && newAnomalyIds.has(a.id) ? 'text-red-500 animate-pulse' :
-                        a.severity === 'high' ? 'text-red-500' : 
-                        a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
-                      }`} />
-                      <span className="font-medium">
-                        {a.details}
-                        {a.id && newAnomalyIds.has(a.id) && (
-                          <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
-                        )}
-                      </span>
-                      {a.metadata?.timeElapsedFormatted && (
-                        <span className="text-gray-400">
-                          at {a.metadata?.timeElapsedFormatted }
-                        </span>
-                      )}
-                      {a.metadata?.description && (
-                        <span className="text-gray-600 ml-2">- {a.metadata.description}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                renderAnomaliesList()
               )}
             </div>
           </div>
@@ -973,53 +1037,7 @@ function InterviewDetails() {
                     : "No anomalies detected for this interview yet."}
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {anomalies.map((a, i) => (
-                    <div
-                      key={a.id || i}
-                      className={`flex items-center gap-2 text-sm p-2 hover:bg-gray-50 rounded cursor-pointer ${
-                        a.id && newAnomalyIds.has(a.id) 
-                          ? (a.severity as string) === 'warning'
-                            ? 'bg-yellow-50 border-l-2 border-yellow-500' 
-                            : 'bg-red-50 border-l-2 border-red-500'
-                          : ''
-                      }`}
-                      onClick={() => {
-                        // Remove from new anomalies when clicked
-                        if (a.id && newAnomalyIds.has(a.id)) {
-                          const updatedNewIds = new Set(newAnomalyIds);
-                          updatedNewIds.delete(a.id);
-                          setNewAnomalyIds(updatedNewIds);
-                        }
-                        
-                        // If we have a timeElapsedFormatted, seek to that time
-                        if (a.metadata?.timeElapsedFormatted) {
-                          seekToTime(a.metadata.timeElapsedFormatted);
-                        }
-                      }}
-                    >
-                      <AlertTriangle className={`h-4 w-4 ${
-                        a.id && newAnomalyIds.has(a.id) ? 'text-red-500 animate-pulse' :
-                        a.severity === 'high' ? 'text-red-500' : 
-                        a.severity === 'medium' ? 'text-yellow-500' : 'text-orange-400'
-                      }`} />
-                      <span className="font-medium">
-                        {a.details}
-                        {a.id && newAnomalyIds.has(a.id) && (
-                          <span className="ml-2 text-xs font-semibold text-red-600">NEW</span>
-                        )}
-                      </span>
-                      {a.metadata?.timeElapsedFormatted && (
-                        <span className="text-gray-400">
-                          at {a.metadata?.timeElapsedFormatted }
-                        </span>
-                      )}
-                      {a.metadata?.description && (
-                        <span className="text-gray-600 ml-2">- {a.metadata.description}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                renderAnomaliesList()
               )}
             </div>
 
@@ -1247,6 +1265,49 @@ function InterviewDetails() {
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                     </svg>
                     Delete Interview
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Anomaly Delete Confirmation Modal */}
+      {showAnomalyDeleteConfirm && anomalyToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Remove Anomaly</h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to remove this anomaly? This will also update the interview's status if this was the last anomaly of its type.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowAnomalyDeleteConfirm(false);
+                  setAnomalyToDelete(null);
+                }}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => anomalyToDelete.id && handleDeleteAnomaly(anomalyToDelete.id)}
+                className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded flex items-center gap-2"
+                disabled={deletingAnomalyId === anomalyToDelete.id}
+              >
+                {deletingAnomalyId === anomalyToDelete.id ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Removing...
+                  </>
+                ) : (
+                  <>
+                    <X className="h-4 w-4" />
+                    Remove Anomaly
                   </>
                 )}
               </button>
