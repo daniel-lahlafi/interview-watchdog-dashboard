@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import interviewService from '../firebase/services'
-import { InterviewStatus } from '../firebase/types'
+import { getEffectiveInterviewStatus, InterviewStatus } from '../firebase/types'
 import { useNavigate } from 'react-router-dom'
 import {
   BarChart,
@@ -54,19 +54,19 @@ function Dashboard() {
         const filteredInterviews = filterInterviewsByTimePeriod(userInterviews, timePeriod)
 
         const cleanCount = filteredInterviews.filter(
-          interview => interview.status === InterviewStatus.Completed
+          interview => getEffectiveInterviewStatus(interview) === InterviewStatus.Completed
         ).length
 
         const suspiciousCount = filteredInterviews.filter(
-          interview => interview.status === InterviewStatus.SuspiciousActivity
+          interview => getEffectiveInterviewStatus(interview) === InterviewStatus.SuspiciousActivity
         ).length
 
         const cheatingCount = filteredInterviews.filter(
-          interview => interview.status === InterviewStatus.Cheating
+          interview => getEffectiveInterviewStatus(interview) === InterviewStatus.Cheating
         ).length
 
         const notCompletedCount = filteredInterviews.filter(
-          interview => interview.status === InterviewStatus.NotCompleted
+          interview => getEffectiveInterviewStatus(interview) === InterviewStatus.NotCompleted
         ).length
 
         const completedCount = cleanCount + suspiciousCount + cheatingCount
@@ -97,14 +97,18 @@ function Dashboard() {
 
   const getInterviewDateTime = (interview: any) => {
     const { startDate, startTime, timezone } = interview
-    const dateTimeStr = `${startDate}T${startTime}`
-    return new Date(dateTimeStr)
+    // Create date string in ISO format
+    const dateTimeStr = `${startDate}T${startTime}:00`
+    // Create date object and adjust for timezone
+    const date = new Date(dateTimeStr)
+    return date
   }
 
   const filterInterviewsByTimePeriod = (interviews: any[], period: TimePeriod) => {
     if (period === 'all') return interviews
 
     const now = new Date()
+    // Set to start of current day in local timezone
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const endOfDay = new Date(startOfDay)
     endOfDay.setDate(endOfDay.getDate() + 1)
@@ -116,9 +120,15 @@ function Dashboard() {
       const interviewDateTime = getInterviewDateTime(interview)
       
       if (period === 'day') {
-        return interviewDateTime >= startOfDay && interviewDateTime < endOfDay
+        // For day view, compare just the dates
+        const interviewDate = new Date(interviewDateTime.getFullYear(), interviewDateTime.getMonth(), interviewDateTime.getDate())
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+        return interviewDate.getTime() === today.getTime()
       } else if (period === 'week') {
-        return interviewDateTime >= startOfDay && interviewDateTime < endOfWeek
+        // For week view, check if interview is within the last 7 days
+        const sevenDaysAgo = new Date(startOfDay)
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+        return interviewDateTime >= sevenDaysAgo && interviewDateTime < endOfWeek
       }
       return true
     })
@@ -138,12 +148,12 @@ function Dashboard() {
         suspicious: interviews.filter(interview => {
           const interviewDate = getInterviewDateTime(interview)
           return interviewDate.toISOString().split('T')[0] === date && 
-                 interview.status === InterviewStatus.SuspiciousActivity
+                 getEffectiveInterviewStatus(interview) === InterviewStatus.SuspiciousActivity
         }).length,
         cheating: interviews.filter(interview => {
           const interviewDate = getInterviewDateTime(interview)
           return interviewDate.toISOString().split('T')[0] === date && 
-                 interview.status === InterviewStatus.Cheating
+                 getEffectiveInterviewStatus(interview) === InterviewStatus.Cheating
         }).length,
       }))
     }
@@ -163,12 +173,12 @@ function Dashboard() {
       suspicious: interviews.filter(interview => {
         const interviewDate = getInterviewDateTime(interview)
         return interviewDate.toISOString().split('T')[0] === date && 
-               interview.status === InterviewStatus.SuspiciousActivity
+               getEffectiveInterviewStatus(interview) === InterviewStatus.SuspiciousActivity
       }).length,
       cheating: interviews.filter(interview => {
         const interviewDate = getInterviewDateTime(interview)
         return interviewDate.toISOString().split('T')[0] === date && 
-               interview.status === InterviewStatus.Cheating
+               getEffectiveInterviewStatus(interview) === InterviewStatus.Cheating
       }).length,
     }))
   }

@@ -28,6 +28,8 @@ export interface Interview {
   timezone?: string; // Timezone for the scheduled interview
   scheduledDateTime?: any; // Firestore Timestamp
   goLiveDateTime?: any; // Firestore Timestamp
+  cheating?: boolean;
+  suspiciousActivity?: boolean;
 }
 
 export interface Anomaly {
@@ -64,6 +66,9 @@ export function getEffectiveInterviewStatus(interview: Interview): InterviewStat
   ) {
     return InterviewStatus.Expired;
   }
+
+  if (interview.cheating) return InterviewStatus.Cheating;
+  if (interview.suspiciousActivity) return InterviewStatus.SuspiciousActivity;
   
   // Otherwise, return the stored status
   return interview.status;
