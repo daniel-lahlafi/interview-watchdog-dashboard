@@ -30,6 +30,7 @@ export interface Interview {
   goLiveDateTime?: any; // Firestore Timestamp
   cheating?: boolean;
   suspiciousActivity?: boolean;
+  notes?: string; // Interview notes
 }
 
 export interface Anomaly {

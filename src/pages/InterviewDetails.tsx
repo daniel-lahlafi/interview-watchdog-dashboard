@@ -83,6 +83,11 @@ function InterviewDetails() {
     meetingLink: '',
   });
   
+  // Add state for notes
+  const [notes, setNotes] = useState<string>('');
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  
   // Add a separate state for links as an array
   const [editLinks, setEditLinks] = useState<string[]>(['']);
   
@@ -439,6 +444,30 @@ function InterviewDetails() {
     }
   };
 
+  // Add function to handle notes update
+  const handleNotesChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNotes(e.target.value);
+  };
+
+  const handleSaveNotes = async () => {
+    try {
+      if (!id) return;
+      await interviewService.updateInterview(id, { notes });
+      setIsEditingNotes(false);
+      setNotesError(null);
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+      setNotesError('Failed to save notes. Please try again.');
+    }
+  };
+
+  // Add effect to load notes when interview data is loaded
+  useEffect(() => {
+    if (interview) {
+      setNotes(interview.notes || '');
+    }
+  }, [interview]);
+
   // guard: loading state
   if (loading) {
     return (
@@ -472,6 +501,66 @@ function InterviewDetails() {
       </div>
     )
   }
+
+  // Add this before the return statement
+  const renderNotesSection = () => {
+    if (!interview) return null;
+
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-medium text-gray-900">Interview Notes</h3>
+          {!isEditingNotes ? (
+            <button
+              onClick={() => setIsEditingNotes(true)}
+              className="text-blue-600 hover:text-blue-800"
+            >
+              <Edit className="h-5 w-5" />
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveNotes}
+                className="text-green-600 hover:text-green-800"
+              >
+                <Check className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setIsEditingNotes(false);
+                  setNotes(interview.notes || '');
+                }}
+                className="text-red-600 hover:text-red-800"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+        </div>
+        {isEditingNotes ? (
+          <div className="space-y-4">
+            <textarea
+              value={notes}
+              onChange={handleNotesChange}
+              className="w-full h-32 p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Add your notes here..."
+            />
+            {notesError && (
+              <p className="text-red-500 text-sm">{notesError}</p>
+            )}
+          </div>
+        ) : (
+          <div className="prose max-w-none">
+            {notes ? (
+              <p className="whitespace-pre-wrap">{notes}</p>
+            ) : (
+              <p className="text-gray-500 italic">No notes added yet.</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -805,6 +894,9 @@ function InterviewDetails() {
                 </div>
               </div>
             )}
+
+            {renderNotesSection()}
+
 
             {/* New Anomaly Alert */}
             {newAnomalyAlert && (
