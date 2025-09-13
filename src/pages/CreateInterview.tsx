@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useUser } from '../contexts/UserContext';
 import interviewService from '../firebase/services';
-import { AlertTriangle, Plus, X } from 'lucide-react';
+import { AlertTriangle, Plus, X, User, Calendar, Link, Target, Clock, MapPin } from 'lucide-react';
 import { InterviewStatus } from '../firebase/types';
 
 // Generate timezone options
@@ -18,6 +20,8 @@ export const DEFAULT_TIMEZONES: string[] = [
   'Asia/Tokyo',        // JST
   'Australia/Sydney',  // AEST/AEDT
 ];
+
+
 
 // Helper function to get timezone abbreviation
 const getTimezoneAbbreviation = (timezone: string): string => {
@@ -107,13 +111,26 @@ const getTimezoneDifference = (timezone: string, localTimezone: string): string 
   }
 };
 
+// Helper function to validate URL
+const isValidUrl = (url: string): boolean => {
+  if (!url) return true; // Empty URLs are valid (optional fields)
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export default function CreateInterview() {
   const { user } = useAuth();
+  const { interviewsLeft, loading: userLoading, refreshInterviewCount } = useUser();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [links, setLinks] = useState<string[]>(['']);
   const [timezoneInfo, setTimezoneInfo] = useState<{ [key: string]: { abbr: string, diff: string } }>({});
+  const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
   
   const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const timezones = DEFAULT_TIMEZONES.includes(userTimezone) 
@@ -148,6 +165,11 @@ export default function CreateInterview() {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+    
+    // Clear validation error when user starts typing
+    if (validationErrors[name]) {
+      setValidationErrors(prev => ({ ...prev, [name]: '' }));
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -161,6 +183,12 @@ export default function CreateInterview() {
     const newLinks = [...links];
     newLinks[index] = value;
     setLinks(newLinks);
+    
+    // Clear validation error for this link
+    const linkKey = `link-${index}`;
+    if (validationErrors[linkKey]) {
+      setValidationErrors(prev => ({ ...prev, [linkKey]: '' }));
+    }
   };
 
   const addLink = () => {
@@ -172,9 +200,61 @@ export default function CreateInterview() {
     setLinks(newLinks);
   };
 
+
+
+  const validateForm = (): boolean => {
+    const errors: { [key: string]: string } = {};
+
+    // Required field validation
+    if (!formData.candidate.trim()) {
+      errors.candidate = 'Candidate name is required';
+    }
+    if (!formData.position.trim()) {
+      errors.position = 'Position is required';
+    }
+    if (!formData.intervieweeEmail.trim()) {
+      errors.intervieweeEmail = 'Interviewee email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.intervieweeEmail)) {
+      errors.intervieweeEmail = 'Please enter a valid email address';
+    }
+    if (!formData.startDate) {
+      errors.startDate = 'Start date is required';
+    }
+    if (!formData.startTime) {
+      errors.startTime = 'Start time is required';
+    }
+
+    // URL validation
+    if (formData.meetingLink && !isValidUrl(formData.meetingLink)) {
+      errors.meetingLink = 'Please enter a valid URL';
+    }
+
+    // Validate interview links
+    links.forEach((link, index) => {
+      if (index === 0 && !link.trim()) {
+        errors[`link-${index}`] = 'At least one interview link is required';
+      } else if (link.trim() && !isValidUrl(link)) {
+        errors[`link-${index}`] = 'Please enter a valid URL';
+      }
+    });
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    if (!validateForm()) {
+      return;
+    }
+
+    // Check if user has interviews left
+    if (interviewsLeft <= 0) {
+      setError('You have no interviews left. Please contact support to get more interviews.');
+      return;
+    }
 
     try {
       setLoading(true);
@@ -199,6 +279,13 @@ export default function CreateInterview() {
       };
 
       const interviewId = (await interviewService.createInterview(interviewData)).id;
+      
+      // Decrement the user's interview count
+      if (user.email) {
+        await interviewService.decrementUserInterviewCount(user.email);
+        await refreshInterviewCount();
+      }
+      
       navigate(`/interviews/${interviewId}`);
     } catch (err) {
       setError('Failed to create interview. Please try again.');
@@ -208,198 +295,350 @@ export default function CreateInterview() {
     }
   };
 
-  return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Create New Interview</h1>
-      
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-          <AlertTriangle className="h-5 w-5 text-red-500" />
-          <p className="text-red-700">{error}</p>
-        </div>
-      )}
+  const getCurrentTimezoneTime = () => {
+    try {
+      return new Date().toLocaleString('en-US', {
+        timeZone: formData.timezone,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch {
+      return '';
+    }
+  };
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Candidate Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="candidate"
-              value={formData.candidate}
-              onChange={handleInputChange}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Position <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="position"
-              value={formData.position}
-              onChange={handleInputChange}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Duration (minutes) <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="number"
-              name="duration"
-              value={formData.duration}
-              onChange={handleInputChange}
-              required
-              min="1"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Interviewee Email <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="email"
-              name="intervieweeEmail"
-              value={formData.intervieweeEmail}
-              onChange={handleInputChange}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* Interview Scheduling Section */}
-        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Schedule Interview</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Start Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                name="startDate"
-                value={formData.startDate}
-                onChange={handleInputChange}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+      return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        <div className="mx-auto p-4 sm:p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-gray-900 to-gray-800 px-6 py-6 text-white">
+              <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold flex items-center gap-3">
+                  <Target className="h-6 w-6" />
+                  Create New Interview
+                </h1>
+                {!userLoading && (
+                  <div className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2">
+                    <span className="text-sm font-medium">Interviews Left:</span>
+                    <span className="bg-red-500 text-white text-sm font-bold rounded-full h-6 w-6 flex items-center justify-center">
+                      {interviewsLeft}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Start Time <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="time"
-                name="startTime"
-                value={formData.startTime}
-                onChange={handleInputChange}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Timezone <span className="text-red-500">*</span>
-              </label>
-              <select
-                name="timezone"
-                value={formData.timezone}
-                onChange={handleInputChange}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {timezones.map((tz: string) => (
-                  <option key={tz} value={tz}>
-                    {tz} ({timezoneInfo[tz]?.abbr || ''}) - {timezoneInfo[tz]?.diff || ''}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Current time in selected timezone: 
-                {' '}{new Date().toLocaleString('en-US', {timeZone: formData.timezone})}
+
+            <div className="p-4">
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-lg flex items-center gap-3">
+                <AlertTriangle className="h-4 w-4 text-red-500 dark:text-red-400 flex-shrink-0" />
+                <p className="text-red-700 dark:text-red-300 text-sm">{error}</p>
+              </div>
+            )}
+
+            {/* Interviews Left Warning */}
+            {!userLoading && interviewsLeft <= 0 && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 rounded-lg flex items-center gap-3">
+                <AlertTriangle className="h-4 w-4 text-red-500 dark:text-red-400 flex-shrink-0" />
+                <p className="text-red-700 dark:text-red-300 text-sm">
+                  <span className="font-semibold">No interviews left!</span> You have used all your available interviews. Please contact support to get more interviews.
+                </p>
+              </div>
+            )}
+
+            {/* Required Fields Notice */}
+            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg">
+              <p className="text-xs text-blue-700 dark:text-blue-300">
+                <span className="font-semibold">Note:</span> All fields marked with an asterisk (*) are required.
               </p>
             </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* 👤 Candidate Details Section */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                    <User className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Candidate Details</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Candidate Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="candidate"
+                      value={formData.candidate}
+                      onChange={handleInputChange}
+                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                        validationErrors.candidate 
+                          ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                          : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                      placeholder="Enter candidate's full name"
+                    />
+                    {validationErrors.candidate && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.candidate}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Position <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="position"
+                      value={formData.position}
+                      onChange={handleInputChange}
+                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                        validationErrors.position 
+                          ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                          : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                      placeholder="e.g., Senior Software Engineer"
+                    />
+                    {validationErrors.position && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.position}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Interviewee Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      name="intervieweeEmail"
+                      value={formData.intervieweeEmail}
+                      onChange={handleInputChange}
+                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                        validationErrors.intervieweeEmail 
+                          ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                          : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                      placeholder="candidate@example.com"
+                    />
+                    {validationErrors.intervieweeEmail && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.intervieweeEmail}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Duration (minutes) <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="duration"
+                      value={formData.duration}
+                      onChange={handleInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hover:border-gray-400 dark:hover:border-gray-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="30">30 minutes</option>
+                      <option value="45">45 minutes</option>
+                      <option value="60">60 minutes</option>
+                      <option value="90">90 minutes</option>
+                      <option value="120">120 minutes</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🗓️ Schedule Interview Section */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-1.5 bg-green-100 dark:bg-green-900 rounded-lg">
+                    <Calendar className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Schedule Interview</h2>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Start Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      name="startDate"
+                      value={formData.startDate}
+                      onChange={handleInputChange}
+                      onFocus={(e) => e.target.showPicker()}
+                      min={new Date().toISOString().split('T')[0]}
+                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                        validationErrors.startDate 
+                          ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                          : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                    />
+                    {validationErrors.startDate && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.startDate}</p>
+                    )}
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Start Time <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="time"
+                      name="startTime"
+                      value={formData.startTime}
+                      onChange={handleInputChange}
+                      onFocus={(e) => e.target.showPicker()}
+                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                        validationErrors.startTime 
+                          ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                          : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                    />
+                    {validationErrors.startTime && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.startTime}</p>
+                    )}
+                  </div>
+                  
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Timezone <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+                      <select
+                        name="timezone"
+                        value={formData.timezone}
+                        onChange={handleInputChange}
+                        className="w-full pl-8 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hover:border-gray-400 dark:hover:border-gray-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      >
+                        {timezones.map((tz: string) => (
+                          <option key={tz} value={tz}>
+                            {tz} ({timezoneInfo[tz]?.abbr || ''}) - {timezoneInfo[tz]?.diff || ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg">
+                      <p className="text-xs text-blue-700 dark:text-blue-300">
+                        <span className="font-semibold">🕒 Current time in {formData.timezone}:</span> {getCurrentTimezoneTime()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🔗 Links Section */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-1.5 bg-purple-100 dark:bg-purple-900 rounded-lg">
+                    <Link className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Interview Links</h2>
+                </div>
+
+                {/* Meeting Link */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Meeting Link
+                  </label>
+                  <input
+                    type="url"
+                    name="meetingLink"
+                    value={formData.meetingLink}
+                    onChange={handleInputChange}
+                    placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                      validationErrors.meetingLink 
+                        ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                        : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                    }`}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                    Add a Zoom, Google Meet, or other video conferencing link
+                  </p>
+                  {validationErrors.meetingLink && (
+                    <p className="text-red-500 text-sm mt-1">{validationErrors.meetingLink}</p>
+                  )}
+                </div>
+
+                {/* Interview Links */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Interview Links <span className="text-red-500">*</span>
+                  </label>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Add URLs that will open when the interview starts.</p>
+                  
+                  {links.map((link, index) => (
+                    <div key={index} className="flex gap-3 mb-3">
+                      <input
+                        type="url"
+                        value={link}
+                        onChange={(e) => handleLinkChange(index, e.target.value)}
+                        placeholder={index === 0 ? "https://example.com/interview" : "https://example.com"}
+                        className={`flex-1 px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                          validationErrors[`link-${index}`] 
+                            ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                        }`}
+                      />
+                      {links.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeLink(index)}
+                          className="p-3 text-gray-500 dark:text-gray-400 hover:text-red-500 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {validationErrors['link-0'] && (
+                    <p className="text-red-500 text-sm mb-3">{validationErrors['link-0']}</p>
+                  )}
+                  
+                  <button
+                    type="button"
+                    onClick={addLink}
+                    className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Another Link
+                  </button>
+                </div>
+              </div>
+
+              {/* Sticky Submit Button */}
+              <div className="sticky bottom-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 px-6 py-4 -mx-6 -mb-6">
+                <button
+                  type="submit"
+                  disabled={loading || userLoading || interviewsLeft <= 0}
+                  className="w-full py-4 px-6 bg-gradient-to-r from-gray-900 to-black text-white rounded-lg font-semibold text-lg hover:from-gray-800 hover:to-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-3"
+                >
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      Creating...
+                    </>
+                  ) : interviewsLeft <= 0 ? (
+                    'No Interviews Left'
+                  ) : (
+                    <>
+                      Create Interview ({interviewsLeft} left)
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-
-        {/* Meeting Link Section */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Meeting Link
-          </label>
-          <input
-            type="url"
-            name="meetingLink"
-            value={formData.meetingLink}
-            onChange={handleInputChange}
-            placeholder="https://meet.google.com/xxx-xxxx-xxx"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            Add a Zoom, Google Meet, or other video conferencing link
-          </p>
-        </div>
-
-        {/* Links Section */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-medium text-gray-900">Interview Links</h3>
-          <p className="text-sm text-gray-500">Add URLs that will open when the interview starts.</p>
-          
-          {links.map((link, index) => (
-            <div key={index} className="flex gap-2">
-              <input
-                type="url"
-                value={link}
-                onChange={(e) => handleLinkChange(index, e.target.value)}
-                placeholder="https://example.com"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required={index === 0} // Make at least the first link required
-              />
-              {links.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeLink(index)}
-                  className="p-2 text-gray-500 hover:text-red-500 rounded-md hover:bg-gray-100"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              )}
-            </div>
-          ))}
-          
-          <button
-            type="button"
-            onClick={addLink}
-            className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
-          >
-            <Plus className="h-4 w-4" />
-            Add Another Link
-          </button>
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-4 px-6 bg-black text-white rounded-lg font-semibold text-lg hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
-        >
-          {loading ? 'Creating...' : 'Create Interview'}
-        </button>
-      </form>
+      </div>
     </div>
   );
 }
