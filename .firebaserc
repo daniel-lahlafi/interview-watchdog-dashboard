@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "staging": "interview-watchdog"
+  },
+  "targets": {},
+  "etags": {},
+  "hosting": {
+    "public": "dist",
+    "ignore": [],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
