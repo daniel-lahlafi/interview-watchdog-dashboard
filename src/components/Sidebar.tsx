@@ -2,17 +2,17 @@
 // Sidebar.tsx
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, FileText, Settings, LogOut, Plus, Users, BarChart3, Sun, Moon, AlertTriangle, X } from 'lucide-react';
+import { Home, FileText, Settings, LogOut, Plus, Users, BarChart3, Sun, Moon, AlertTriangle, X, HelpCircle } from 'lucide-react';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
 import { useUser } from '../contexts/UserContext';
 import { useTheme } from '../contexts/ThemeContext';
+import HelpModal from './HelpModal';
 
 const navItems = [
-  { to: '/create-interview', icon: <Plus className="h-5 w-5" />, label: 'Create Interview' },
-  { to: '/', icon: <BarChart3 className="h-5 w-5" />, label: 'Dashboard' },
-  { to: '/interviews', icon: <Users className="h-5 w-5" />, label: 'Interviews' },
-  { to: '/settings', icon: <Settings className="h-5 w-5" />, label: 'Settings' },
+  { to: '/create-interview', icon: <Plus className="h-5 w-5" />, label: 'Create Interview', tourId: 'create-interview' },
+  { to: '/', icon: <BarChart3 className="h-5 w-5" />, label: 'Dashboard', tourId: 'dashboard' },
+  { to: '/interviews', icon: <Users className="h-5 w-5" />, label: 'Interviews', tourId: 'interviews' },
 ];
 
 export default function Sidebar() {
@@ -22,6 +22,7 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const handleLogout = async () => {
     try {
@@ -51,11 +52,18 @@ export default function Sidebar() {
             <Link
               key={item.to}
               to={item.to}
+              data-tour={item.tourId}
               className={`
                 flex flex-col items-center py-3 px-2 text-xs font-medium transition-colors relative
-                ${active 
-                  ? 'text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-gray-700 border-b-2 border-blue-700 dark:border-blue-400' 
-                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700'
+                ${isCreateInterview
+                  ? interviewsLeft > 0
+                    ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-900 border-b-2 border-green-700 dark:border-green-400'
+                    : active
+                      ? 'text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-gray-700 border-b-2 border-blue-700 dark:border-blue-400'
+                      : 'text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700'
+                  : active 
+                    ? 'text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-gray-700 border-b-2 border-blue-700 dark:border-blue-400' 
+                    : 'text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700'
                 }
               `}
             >
@@ -69,6 +77,20 @@ export default function Sidebar() {
             </Link>
           );
         })}
+        <Link
+          to="/settings"
+          data-tour="settings"
+          className={`
+            flex flex-col items-center py-3 px-2 text-xs font-medium transition-colors relative
+            ${pathname === '/settings'
+              ? 'text-blue-700 bg-blue-50 dark:text-blue-400 dark:bg-gray-700 border-b-2 border-blue-700 dark:border-blue-400'
+              : 'text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700'
+            }
+          `}
+        >
+          <Settings className="h-5 w-5" />
+          <span className="mt-1 text-center">Settings</span>
+        </Link>
       </div>
 
       {/* Desktop: vertical */}
@@ -87,10 +109,13 @@ export default function Sidebar() {
               <Link
                 key={item.to}
                 to={item.to}
+                data-tour={item.tourId}
                 className={`
                   flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-all duration-200 relative
                   ${isCreateInterview 
-                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 shadow-lg transform hover:scale-105' 
+                    ? interviewsLeft > 0
+                      ? 'bg-gradient-to-r from-green-600 to-green-700 text-white hover:from-green-700 hover:to-green-800 shadow-lg transform hover:scale-105'
+                      : 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 shadow-lg transform hover:scale-105'
                     : active
                       ? 'bg-blue-50 text-blue-700 dark:bg-gray-700 dark:text-blue-400 border-l-4 border-blue-700 dark:border-blue-400'
                       : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white'
@@ -113,13 +138,32 @@ export default function Sidebar() {
           })}
         </div>
         <div className="px-3 pb-6 border-t border-gray-100 dark:border-gray-700 pt-4">
-          <button
+          {/* <button
             onClick={toggleTheme}
             className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
           >
             {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
             {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+          </button> */}
+          <button
+            onClick={() => setShowHelp(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors"
+          >
+            <HelpCircle className="h-5 w-5" />
+            Help
           </button>
+          <Link
+            to="/settings"
+            data-tour="settings"
+            className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors mt-2 ${
+              pathname === '/settings'
+                ? 'bg-blue-50 text-blue-700 dark:bg-gray-700 dark:text-blue-400'
+                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            <Settings className="h-5 w-5" />
+            Settings
+          </Link>
           <button
             onClick={() => setShowLogoutConfirm(true)}
             className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-red-50 dark:hover:bg-red-900 hover:text-red-700 dark:hover:text-red-400 rounded-lg transition-colors mt-2"
@@ -172,6 +216,11 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      <HelpModal
+        isOpen={showHelp}
+        onClose={() => setShowHelp(false)}
+      />
     </nav>
   );
 }

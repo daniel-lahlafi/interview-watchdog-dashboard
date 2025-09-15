@@ -19,7 +19,9 @@ import {
   Calendar as CalendarIcon,
   Mail,
   CalendarDays,
-  Clock as ClockIcon
+  Clock as ClockIcon,
+  Database,
+  Loader2
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import interviewService from '../firebase/services';
@@ -27,6 +29,7 @@ import type { Interview } from '../firebase/types';
 import { InterviewStatus, getEffectiveInterviewStatus } from '../firebase/types';
 import { useAuth } from '../contexts/AuthContext';
 import { useUser } from '../contexts/UserContext';
+import { generateMockInterviewsData } from '../mock/interviewsMockData';
 
 type SortField = 'date' | 'candidate' | 'position' | 'status';
 type SortOrder = 'asc' | 'desc';
@@ -240,6 +243,11 @@ function Interviews() {
   const { user } = useAuth();
   const { interviewsLeft, loading: userLoading } = useUser();
   
+  // Mock data states
+  const [loadingMockData, setLoadingMockData] = useState(false);
+  const [mockDataLoaded, setMockDataLoaded] = useState(false);
+  const [mockDataButtonHidden, setMockDataButtonHidden] = useState(false);
+  
   const initialStatus = searchParams.get('status') as InterviewStatus | null;
   const [statusFilter, setStatusFilter] = useState<InterviewStatus | 'all'>(initialStatus || 'all');
 
@@ -271,6 +279,33 @@ function Interviews() {
 
   const goToDetail = (id: string) => {
     navigate(`/interviews/${id}`);
+  };
+
+  const loadMockData = async () => {
+    try {
+      setLoadingMockData(true);
+      setError(null);
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const mockInterviewsData = generateMockInterviewsData(timeframe);
+      setInterviews(mockInterviewsData);
+      
+      setMockDataLoaded(true);
+      setMockDataButtonHidden(true); // Hide the button after loading
+      
+      // Show success message for 3 seconds
+      setTimeout(() => {
+        setMockDataLoaded(false);
+      }, 3000);
+      
+    } catch (err) {
+      setError('Failed to load mock data');
+      console.error(err);
+    } finally {
+      setLoadingMockData(false);
+    }
   };
 
   const handleSort = (field: SortField) => {
@@ -405,6 +440,33 @@ function Interviews() {
               <span className="px-2 py-1 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
                 {summaryStats.live} Live
               </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mt-4">
+          <div className="flex items-center gap-3">
+            {/* {!mockDataButtonHidden && (
+              <button
+                onClick={loadMockData}
+                disabled={loadingMockData}
+                className="flex items-center space-x-2 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-900/20 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-blue-200 dark:border-blue-700"
+                title="Load mock data for development purposes"
+              >
+                {loadingMockData ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Database className="h-4 w-4" />
+                )}
+                <span>{loadingMockData ? 'Loading...' : 'Load Mock Data'}</span>
+                <span className="text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded">DEV</span>
+              </button>
+            )} */}
+            {mockDataLoaded && (
+              <div className="flex items-center space-x-1 px-2 py-1 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-md">
+                <CheckCircle className="h-3 w-3" />
+                <span>Mock data loaded!</span>
+              </div>
             )}
           </div>
         </div>

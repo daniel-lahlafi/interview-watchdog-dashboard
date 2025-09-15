@@ -354,8 +354,8 @@ export const interviewService = {
   },
 
   // User-related functions
-  getUserByEmail: async (email: string): Promise<any | null> => {
-    const docRef = doc(db, 'users', email);
+  getUserByUid: async (uid: string): Promise<any | null> => {
+    const docRef = doc(db, 'users', uid);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return { id: docSnap.id, ...docSnap.data() };
@@ -363,41 +363,25 @@ export const interviewService = {
     return null;
   },
 
-  createOrUpdateUser: async (email: string, userData: any): Promise<void> => {
-    const docRef = doc(db, 'users', email);
+  createOrUpdateUser: async (uid: string, userData: any): Promise<void> => {
+    const docRef = doc(db, 'users', uid);
     await setDoc(docRef, userData, { merge: true });
   },
 
-  getUserInterviewCount: async (email: string): Promise<number> => {
+  getUserInterviewCount: async (uid: string): Promise<number> => {
     try {
-      const userDoc = await interviewService.getUserByEmail(email);
-      return userDoc?.interviewsLeft || 0;
+      const userDoc = await interviewService.getUserByUid(uid);
+      return userDoc.interviewLimit - userDoc.interviewsUsed;
     } catch (error) {
       console.error('Error fetching user interview count:', error);
       return 0;
     }
   },
 
-  decrementUserInterviewCount: async (email: string): Promise<void> => {
-    try {
-      const userDoc = await interviewService.getUserByEmail(email);
-      const currentCount = userDoc?.interviewsLeft || 0;
-      const newCount = Math.max(0, currentCount - 1);
-      
-      await interviewService.createOrUpdateUser(email, {
-        interviewsLeft: newCount,
-        lastUpdated: new Date()
-      });
-    } catch (error) {
-      console.error('Error decrementing user interview count:', error);
-      throw error;
-    }
-  },
-
   // Check if user has a password set
-  isPasswordSet: async (email: string): Promise<boolean> => {
+  isPasswordSet: async (uid: string): Promise<boolean> => {
     try {
-      const userDoc = await interviewService.getUserByEmail(email);
+      const userDoc = await interviewService.getUserByUid(uid);
       return userDoc?.isPasswordSet || false;
     } catch (error) {
       console.error('Error checking password status:', error);
@@ -406,14 +390,25 @@ export const interviewService = {
   },
 
   // Set password status for user
-  setPasswordStatus: async (email: string, isPasswordSet: boolean): Promise<void> => {
+  setPasswordStatus: async (uid: string, isPasswordSet: boolean): Promise<void> => {
     try {
-      await interviewService.createOrUpdateUser(email, {
-        isPasswordSet,
-        lastUpdated: new Date()
+      await interviewService.createOrUpdateUser(uid, {
+        isPasswordSet
       });
     } catch (error) {
       console.error('Error setting password status:', error);
+      throw error;
+    }
+  },
+
+  // Update data retention setting for user
+  updateDataRetention: async (uid: string, dataRetention: string): Promise<void> => {
+    try {
+      await interviewService.createOrUpdateUser(uid, {
+        dataRetention
+      });
+    } catch (error) {
+      console.error('Error updating data retention:', error);
       throw error;
     }
   }

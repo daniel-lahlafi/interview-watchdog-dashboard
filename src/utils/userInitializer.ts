@@ -1,13 +1,13 @@
 import interviewService from '../firebase/services';
 
-export const initializeUserData = async (email: string, interviewsLeft: number = 10) => {
+export const initializeUserData = async (uid: string, interviewsLeft: number = 10) => {
   try {
-    await interviewService.createOrUpdateUser(email, {
+    await interviewService.createOrUpdateUser(uid, {
       interviewsLeft,
       lastUpdated: new Date(),
       createdAt: new Date()
     });
-    console.log(`User ${email} initialized with ${interviewsLeft} interviews`);
+    console.log(`User ${uid} initialized with ${interviewsLeft} interviews`);
     return true;
   } catch (error) {
     console.error('Error initializing user data:', error);
@@ -15,9 +15,9 @@ export const initializeUserData = async (email: string, interviewsLeft: number =
   }
 };
 
-export const getUserData = async (email: string) => {
+export const getUserData = async (uid: string) => {
   try {
-    const userData = await interviewService.getUserByEmail(email);
+    const userData = await interviewService.getUserByUid(uid);
     return userData;
   } catch (error) {
     console.error('Error fetching user data:', error);
@@ -25,13 +25,13 @@ export const getUserData = async (email: string) => {
   }
 };
 
-export const updateUserInterviewCount = async (email: string, count: number) => {
+export const updateUserInterviewCount = async (uid: string, count: number) => {
   try {
-    await interviewService.createOrUpdateUser(email, {
+    await interviewService.createOrUpdateUser(uid, {
       interviewsLeft: count,
       lastUpdated: new Date()
     });
-    console.log(`Updated ${email} to have ${count} interviews left`);
+    console.log(`Updated ${uid} to have ${count} interviews left`);
     return true;
   } catch (error) {
     console.error('Error updating user interview count:', error);

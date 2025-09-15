@@ -3,6 +3,7 @@ import { getAnalytics, Analytics } from 'firebase/analytics';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import { getAuth, Auth } from 'firebase/auth';
+import { getFunctions, Functions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBnn4oq6OmqlMFANf_1EbtyYta19QKRLNQ",
@@ -20,6 +21,7 @@ let analytics: Analytics;
 let db: Firestore;
 let storage: FirebaseStorage;
 let auth: Auth;
+let functions: Functions;
 
 if (!getApps().length) {
   app = initializeApp(firebaseConfig);
@@ -27,12 +29,14 @@ if (!getApps().length) {
   db = getFirestore(app);
   storage = getStorage(app);
   auth = getAuth(app);
+  functions = getFunctions(app);
 } else {
   app = getApps()[0];
   analytics = getAnalytics(app);
   db = getFirestore(app);
   storage = getStorage(app);
   auth = getAuth(app);
+  functions = getFunctions(app);
 }
 
-export { app, analytics, db, storage, auth }; 
+export { app, analytics, db, storage, auth, functions }; 

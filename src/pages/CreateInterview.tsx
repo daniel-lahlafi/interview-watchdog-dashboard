@@ -122,6 +122,34 @@ const isValidUrl = (url: string): boolean => {
   }
 };
 
+// Helper function to convert Zoom meeting links to the proper format
+const convertZoomLink = (url: string): string => {
+  try {
+    // Check if it's a Zoom meeting link
+    if (!url.includes('zoom.us/j/')) {
+      return url; // Return original if not a Zoom link
+    }
+
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split('/');
+    const meetingId = pathParts[pathParts.length - 1];
+    console.log('meetingId', meetingId);
+    
+    // Extract password from query parameters
+    const password = urlObj.searchParams.get('pwd');
+    
+    if (meetingId && password) {
+      // Construct the new Zoom link format
+      return `https://app.zoom.us/wc/${meetingId}/join?fromPWA=1&pwd=${password}`;
+    }
+    
+    return url; // Return original if we can't extract the required parts
+  } catch (error) {
+    console.error('Error converting Zoom link:', error);
+    return url; // Return original on error
+  }
+};
+
 export default function CreateInterview() {
   const { user } = useAuth();
   const { interviewsLeft, loading: userLoading, refreshInterviewCount } = useUser();
@@ -144,6 +172,8 @@ export default function CreateInterview() {
     startTime: '',
     timezone: userTimezone,
     duration: '60',
+    durationHours: '1',
+    durationMinutes: '0',
     intervieweeEmail: '',
     meetingLink: '',
   });
@@ -169,6 +199,30 @@ export default function CreateInterview() {
     // Clear validation error when user starts typing
     if (validationErrors[name]) {
       setValidationErrors(prev => ({ ...prev, [name]: '' }));
+    }
+  };
+
+  const handleDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => {
+      const newData = { ...prev, [name]: value };
+      
+      // Convert hours and minutes to total minutes
+      const hours = parseInt(newData.durationHours) || 0;
+      const minutes = parseInt(newData.durationMinutes) || 0;
+      const totalMinutes = hours * 60 + minutes;
+      
+      return { ...newData, duration: totalMinutes.toString() };
+    });
+    
+    // Clear validation errors for duration fields
+    if (validationErrors.duration || validationErrors.durationHours || validationErrors.durationMinutes) {
+      setValidationErrors(prev => ({ 
+        ...prev, 
+        duration: '', 
+        durationHours: '', 
+        durationMinutes: '' 
+      }));
     }
   };
 
@@ -223,6 +277,26 @@ export default function CreateInterview() {
     if (!formData.startTime) {
       errors.startTime = 'Start time is required';
     }
+    // Validate duration fields
+    const hours = parseInt(formData.durationHours) || 0;
+    const minutes = parseInt(formData.durationMinutes) || 0;
+    const totalMinutes = hours * 60 + minutes;
+    
+    if (!formData.durationHours || formData.durationHours.trim() === '') {
+      errors.durationHours = 'Hours is required';
+    } else if (isNaN(hours) || hours < 0 || hours > 8) {
+      errors.durationHours = 'Hours must be between 0 and 8';
+    }
+    
+    if (!formData.durationMinutes || formData.durationMinutes.trim() === '') {
+      errors.durationMinutes = 'Minutes is required';
+    } else if (isNaN(minutes) || minutes < 0 || minutes > 59) {
+      errors.durationMinutes = 'Minutes must be between 0 and 59';
+    }
+    
+    if (totalMinutes < 1 || totalMinutes > 480) {
+      errors.duration = 'Total duration must be between 1 and 480 minutes';
+    }
 
     // URL validation
     if (formData.meetingLink && !isValidUrl(formData.meetingLink)) {
@@ -263,6 +337,9 @@ export default function CreateInterview() {
       // Filter out empty links
       const validLinks = links.filter(link => link.trim() !== '');
 
+      // Convert meeting link if it's a Zoom link
+      const convertedMeetingLink = formData.meetingLink ? convertZoomLink(formData.meetingLink) : '';
+
       // Create interview in Firestore
       const interviewData = {
         interviewerId: user.uid,
@@ -275,14 +352,13 @@ export default function CreateInterview() {
         status: InterviewStatus.NotCompleted,
         intervieweeEmail: formData.intervieweeEmail,
         links: validLinks,
-        meetingLink: formData.meetingLink,
+        meetingLink: convertedMeetingLink,
       };
 
       const interviewId = (await interviewService.createInterview(interviewData)).id;
       
       // Decrement the user's interview count
       if (user.email) {
-        await interviewService.decrementUserInterviewCount(user.email);
         await refreshInterviewCount();
       }
       
@@ -413,7 +489,7 @@ export default function CreateInterview() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Interviewee Email <span className="text-red-500">*</span>
+                      Candidate Email <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="email"
@@ -434,20 +510,60 @@ export default function CreateInterview() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Duration (minutes) <span className="text-red-500">*</span>
+                      Duration <span className="text-red-500">*</span>
                     </label>
-                    <select
-                      name="duration"
-                      value={formData.duration}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hover:border-gray-400 dark:hover:border-gray-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="30">30 minutes</option>
-                      <option value="45">45 minutes</option>
-                      <option value="60">60 minutes</option>
-                      <option value="90">90 minutes</option>
-                      <option value="120">120 minutes</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                          Hours
+                        </label>
+                        <input
+                          type="number"
+                          name="durationHours"
+                          value={formData.durationHours}
+                          onChange={handleDurationChange}
+                          min="0"
+                          max="8"
+                          placeholder="0"
+                          className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                            validationErrors.durationHours 
+                              ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                              : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                          }`}
+                        />
+                        {validationErrors.durationHours && (
+                          <p className="text-red-500 text-xs mt-1">{validationErrors.durationHours}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                          Minutes
+                        </label>
+                        <input
+                          type="number"
+                          name="durationMinutes"
+                          value={formData.durationMinutes}
+                          onChange={handleDurationChange}
+                          min="0"
+                          max="59"
+                          placeholder="0"
+                          className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors bg-white dark:bg-gray-700 text-gray-900 dark:text-white ${
+                            validationErrors.durationMinutes 
+                              ? 'border-red-300 bg-red-50 dark:bg-red-900' 
+                              : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                          }`}
+                        />
+                        {validationErrors.durationMinutes && (
+                          <p className="text-red-500 text-xs mt-1">{validationErrors.durationMinutes}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Total: {formData.duration} minutes ({Math.floor(parseInt(formData.duration) / 60)}h {parseInt(formData.duration) % 60}m)
+                    </p>
+                    {validationErrors.duration && (
+                      <p className="text-red-500 text-xs mt-1">{validationErrors.duration}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -619,7 +735,11 @@ export default function CreateInterview() {
                 <button
                   type="submit"
                   disabled={loading || userLoading || interviewsLeft <= 0}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-gray-900 to-black text-white rounded-lg font-semibold text-lg hover:from-gray-800 hover:to-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-3"
+                  className={`w-full py-4 px-6 text-white rounded-lg font-semibold text-lg focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-3 ${
+                    interviewsLeft > 0
+                      ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 focus:ring-green-500'
+                      : 'bg-gradient-to-r from-gray-900 to-black hover:from-gray-800 hover:to-gray-900 focus:ring-black'
+                  }`}
                 >
                   {loading ? (
                     <>
@@ -630,7 +750,7 @@ export default function CreateInterview() {
                     'No Interviews Left'
                   ) : (
                     <>
-                      Create Interview ({interviewsLeft} left)
+                      Create Interview
                     </>
                   )}
                 </button>

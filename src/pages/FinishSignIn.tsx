@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Eye, EyeOff, Lock, AlertCircle, CheckCircle } from 'lucide-react';
 import logo from '../assets/logo.png';
+import { getAuth, updatePassword } from 'firebase/auth';
 
 function FinishSignIn() {
   const [password, setPassword] = useState('');
@@ -18,19 +19,19 @@ function FinishSignIn() {
   useEffect(() => {
     const handleSignInLink = async () => {
       if (isSignInLink()) {
-        const email = window.localStorage.getItem('emailForSignIn');
-        if (email) {
+        const email = user?.email || window.localStorage.getItem('emailForSignIn');
+
+        if (email && !user?.email) { // If email is found and user is not signed in, sign in with link
           try {
             setLoading(true);
             await signInWithLink(email);
-            setSuccess('Successfully signed in! Please set your password.');
           } catch (error) {
             setError('Failed to complete sign-in. Please try again.');
             console.error(error);
           } finally {
             setLoading(false);
           }
-        } else {
+        } else if (!user?.email) { // If user is not signed in, show error
           setError('No email found for sign-in. Please try signing in again.');
         }
       }
@@ -62,21 +63,39 @@ function FinishSignIn() {
     try {
       setError('');
       setLoading(true);
-      
-      // Set the password status in Firebase
-      if (user?.email) {
-        await setPasswordStatus(user.email, true);
+
+      // First, update the password in Firebase Auth
+      if (user) {
+        await updatePassword(user, password).then(() => {
+          setPasswordStatus(user.uid, true);
+          setSuccess('Password set successfully! Redirecting to dashboard...');
+          setTimeout(() => {
+            navigate('/');
+          }, 2000);
+        }).catch((error) => {
+          console.error('Error setting password status:', error);
+          setError('Failed to set password. Please try again.');
+        });
+        
+      } else {
+        throw new Error('No user found');
       }
       
-      setSuccess('Password set successfully! Redirecting to dashboard...');
-      
       // Redirect to dashboard after a short delay
-      setTimeout(() => {
-        navigate('/');
-      }, 2000);
-    } catch (error) {
-      setError('Failed to set password. Please try again.');
-      console.error(error);
+
+    } catch (error: any) {
+      console.error('Error setting password:', error);
+      
+      // Handle specific Firebase Auth errors
+      if (error.code === 'auth/requires-recent-login') {
+        setError('Please sign in again to set your password. Your session has expired.');
+      } else if (error.code === 'auth/weak-password') {
+        setError('Password is too weak. Please choose a stronger password.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many attempts. Please try again later.');
+      } else {
+        setError(error.message || 'Failed to set password. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

@@ -29,7 +29,7 @@ export const authService = {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
       // Set the password status to true for users who sign up with a password
-      await interviewService.setPasswordStatus(email, true);
+      await interviewService.setPasswordStatus(userCredential.user.uid, true);
       
       return userCredential.user;
     } catch (error) {
@@ -59,7 +59,7 @@ export const authService = {
   sendSignInLink: async (email: string) => {
     try {
       const actionCodeSettings = {
-        url: 'https://interviewwatchdog.com/auth/finish-signin',
+        url: window.location.origin + '/auth/finish-signin',
         handleCodeInApp: true,
       };
       await sendSignInLinkToEmail(auth, email, actionCodeSettings);
@@ -81,11 +81,10 @@ export const authService = {
       const result = await signInWithEmailLink(auth, email, window.location.href);
       // Clear the email from localStorage
       window.localStorage.removeItem('emailForSignIn');
-      
       // Check if user already has a password set, if not, set it to false
-      const hasPasswordSet = await interviewService.isPasswordSet(email);
+      const hasPasswordSet = await interviewService.isPasswordSet(result.user.uid);
       if (!hasPasswordSet) {
-        await interviewService.setPasswordStatus(email, false);
+        await interviewService.setPasswordStatus(result.user.uid, false);
       }
       
       return result.user;
@@ -97,10 +96,10 @@ export const authService = {
   // Check if user has a password set
   hasPassword: async (user: User): Promise<boolean> => {
     try {
-      if (!user.email) {
+      if (!user.uid) {
         return false;
       }
-      return await interviewService.isPasswordSet(user.email);
+      return await interviewService.isPasswordSet(user.uid);
     } catch (error) {
       console.error('Error checking password status:', error);
       // Default to false for safety
@@ -109,9 +108,9 @@ export const authService = {
   },
 
   // Set password status for user
-  setPasswordStatus: async (email: string, isPasswordSet: boolean): Promise<void> => {
+  setPasswordStatus: async (uid: string, isPasswordSet: boolean): Promise<void> => {
     try {
-      await interviewService.setPasswordStatus(email, isPasswordSet);
+      await interviewService.setPasswordStatus(uid, isPasswordSet);
     } catch (error) {
       console.error('Error setting password status:', error);
       throw error;

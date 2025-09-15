@@ -14,7 +14,7 @@ interface AuthContextType {
   isSignInLink: () => boolean;
   signInWithLink: (email: string) => Promise<User>;
   checkPasswordStatus: () => Promise<void>;
-  setPasswordStatus: (email: string, isPasswordSet: boolean) => Promise<void>;
+  setPasswordStatus: (uid: string, isPasswordSet: boolean) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
