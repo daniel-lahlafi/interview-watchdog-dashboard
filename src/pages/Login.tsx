@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Eye, EyeOff, Mail, Lock, AlertCircle, Link as LinkIcon } from 'lucide-react';
-import logo from '../assets/logo.png'
+import logo from '../assets/logo.png';
+import PasswordResetBox from '../components/PasswordResetBox';
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -11,11 +12,11 @@ function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
   const [passwordlessSent, setPasswordlessSent] = useState(false);
   const [signInMode, setSignInMode] = useState<'password' | 'passwordless'>('password');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const navigate = useNavigate();
-  const { signIn, resetPassword, sendSignInLink, user } = useAuth();
+  const { signIn, sendSignInLink, user } = useAuth();
 
   // Redirect if already logged in
   useEffect(() => {
@@ -67,24 +68,11 @@ function Login() {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!email) {
-      setError('Please enter your email address first');
-      return;
-    }
 
-    try {
-      setError('');
-      setLoading(true);
-      await resetPassword(email);
-      setResetSent(true);
-    } catch (err) {
-      setError('Failed to send password reset email');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Show password reset box if user clicked forgot password
+  if (showForgotPassword) {
+    return <PasswordResetBox onBack={() => setShowForgotPassword(false)} />;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900 py-12 px-4 sm:px-6 lg:px-8">
@@ -143,13 +131,6 @@ function Login() {
             </div>
           )}
 
-          {resetSent && (
-            <div className="bg-green-50 dark:bg-green-900 border-l-4 border-green-400 dark:border-green-600 p-4 rounded-md">
-              <p className="text-sm text-green-700 dark:text-green-200">
-                Password reset email sent! Please check your inbox.
-              </p>
-            </div>
-          )}
 
           {passwordlessSent && (
             <div className="bg-green-50 dark:bg-green-900 border-l-4 border-green-400 dark:border-green-600 p-4 rounded-md">
@@ -236,7 +217,7 @@ function Login() {
 
               <button
                 type="button"
-                onClick={handleResetPassword}
+                onClick={() => setShowForgotPassword(true)}
                 className="text-sm font-medium text-blue-600 hover:text-blue-500 focus:outline-none"
               >
                 Forgot your password?
@@ -264,7 +245,7 @@ function Login() {
             </button>
           </div>
 
-          <div className="text-center">
+          {/* <div className="text-center">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               New user?{' '}
               <Link 
@@ -274,7 +255,7 @@ function Login() {
                 Start onboarding
               </Link>
             </p>
-          </div>
+          </div> */}
         </form>
       </div>
     </div>

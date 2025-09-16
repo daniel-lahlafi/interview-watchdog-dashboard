@@ -1,7 +1,7 @@
 
 // App.tsx
 import React from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Interviews from './pages/Interviews'
@@ -45,65 +45,7 @@ function App() {
           <OnboardingProvider>
             <ThemeProvider> {/* Add ThemeProvider */}
               <OnboardingManager>
-                <div className="flex flex-col md:flex-row h-screen bg-gray-50 dark:bg-gray-900">
-                  <Sidebar />
-
-                  <div className="flex-1 overflow-auto">
-                    <Routes>
-                      <Route path="/login" element={<Login />} />
-                      <Route path="/onboarding" element={<Onboarding />} />
-                      <Route path="/onboarding/tutorial" element={<OnboardingTutorial />} />
-                      <Route path="/auth/finish-signin" element={<FinishSignIn />} />
-                      <Route
-                        path="/"
-                        element={
-                          <PrivateRoute>
-                            <Dashboard />
-                          </PrivateRoute>
-                        }
-                      />
-                      <Route
-                        path="/interviews"
-                        element={
-                          <PrivateRoute>
-                            <Interviews />
-                          </PrivateRoute>
-                        }
-                      />
-                      <Route
-                        path="/interviews/:id"
-                        element={
-                          <PrivateRoute>
-                            <InterviewDetails />
-                          </PrivateRoute>
-                        }
-                      />
-                      <Route
-                        path="/create-interview"
-                        element={
-                          <PrivateRoute>
-                            <CreateInterview />
-                          </PrivateRoute>
-                        }
-                      />
-                      <Route
-                        path="/settings"
-                        element={
-                          <PrivateRoute>
-                            <Settings />
-                          </PrivateRoute>
-                        }
-                      />
-                      {/* Catch-all route to redirect to login if unauthenticated or dashboard if authenticated */}
-                      <Route 
-                        path="*" 
-                        element={
-                          <AuthRedirect />
-                        } 
-                      />
-                    </Routes>
-                  </div>
-                </div>
+                <AppContent />
               </OnboardingManager>
             </ThemeProvider>
           </OnboardingProvider>
@@ -111,6 +53,84 @@ function App() {
       </AuthProvider>
     </Router>
   )
+}
+
+function AppContent() {
+  const location = useLocation();
+  
+  // Define public routes that should not show the sidebar
+  const publicRoutes = ['/login', '/onboarding', '/onboarding/tutorial', '/auth/finish-signin'];
+  const isPublicRoute = publicRoutes.includes(location.pathname);
+  
+  if (isPublicRoute) {
+    return (
+      <div className="h-screen bg-gray-50 dark:bg-gray-900">
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/onboarding/tutorial" element={<OnboardingTutorial />} />
+          <Route path="/auth/finish-signin" element={<FinishSignIn />} />
+        </Routes>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="flex flex-col md:flex-row h-screen bg-gray-50 dark:bg-gray-900">
+      <Sidebar />
+      <div className="flex-1 overflow-auto">
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <PrivateRoute>
+                <Dashboard />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/interviews"
+            element={
+              <PrivateRoute>
+                <Interviews />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/interviews/:id"
+            element={
+              <PrivateRoute>
+                <InterviewDetails />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/create-interview"
+            element={
+              <PrivateRoute>
+                <CreateInterview />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <PrivateRoute>
+                <Settings />
+              </PrivateRoute>
+            }
+          />
+          {/* Catch-all route to redirect to login if unauthenticated or dashboard if authenticated */}
+          <Route 
+            path="*" 
+            element={
+              <AuthRedirect />
+            } 
+          />
+        </Routes>
+      </div>
+    </div>
+  );
 }
 
 // Component to handle redirects based on authentication status
